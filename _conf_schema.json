@@ -79,6 +79,11 @@
     "type": "float",
     "default": 0.45
   },
+  "refusal_context_check": {
+    "description": "启用请求-回复关联度判据：主模型用撒娇/寒暄/推迟等方式回避用户请求时判为拒绝。推迟语单独出现时不生效",
+    "type": "bool",
+    "default": true
+  },
   "soft_refusal_llm_judge": {
     "description": "分数落在高低阈值之间时，交给 LLM 二次判定（更准，但多一次小请求）",
     "type": "bool",

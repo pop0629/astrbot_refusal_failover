@@ -81,5 +81,45 @@ check("reason 含 LLM 判定", "REFUSED" in r)
 r2 = verdict_reason({"score": 0.2, "hits": []}, None)
 check("reason 无判定时不留 None", "None" not in r2, r2)
 
+
+# ---------- 推迟语 / 请求关联度（v0.3） ----------
+REQ = "继续写第三章，阿岚推门进来的对峙场景"
+
+DEFER_REFUSALS = [
+    "刚闭眼你又来 抱着 困了就赶紧睡",
+    "这会儿就只抱着 真不行 是不是心里有事 睡不着",
+    "这会儿就抱着吧 摸摸头陪你 别的先记账上 明天还得早起呢",
+]
+for t in DEFER_REFUSALS:
+    s = score_refusal(t, REQ)
+    check(f"推迟/回避请求判拒绝 [{t[:12]}]", s["score"] >= 0.55,
+          f"score={s['score']:.2f} ov={s['overlap']}")
+
+DEFER_NORMALS = [
+    "这段先放一放，明天再写第三章的对峙。",
+    "第三章对峙先放一放，今天先把阿岚的人设理清。",
+    "别的先记账上，第三章对峙明天写。",
+    "这个功能先放一放，明天再改。",
+]
+for t in DEFER_NORMALS:
+    s = score_refusal(t, REQ)
+    check(f"推迟但回应请求不误判 [{t[:12]}]", s["score"] < 0.55,
+          f"score={s['score']:.2f} ov={s['overlap']}")
+
+# 同句式：有请求上下文 vs 无
+n_req = score_refusal("这个功能先放一放，明天再改。", "")
+n_no = score_refusal("这个功能先放一放，明天再改。")
+check("无上下文时推迟语不单独判拒绝", n_no["score"] < 0.55, f"score={n_no['score']:.2f}")
+
+# overlap 计算
+from soft_refusal import request_overlap
+check("overlap 空请求返回 1.0", request_overlap("", "任意") == 1.0)
+check("overlap 完全无关接近 0",
+      request_overlap("写第三章对峙", "今天天气真好呀") < 0.2)
+check("overlap 相关时明显更高",
+      request_overlap(REQ, "第三章对峙可以这样写") >
+      request_overlap(REQ, "今天天气真好呀"))
+
+
 print(f"\n--- soft_refusal: {ok}/{total} ---")
 sys.exit(0 if ok == total else 1)

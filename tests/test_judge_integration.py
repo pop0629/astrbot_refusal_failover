@@ -128,21 +128,21 @@ async def run():
 
     # 3) 灰区 + judge 说 REFUSED -> 转交
     pl, main, alt = make(judge_answer="REFUSED")
-    r = LLMResponse(completion_text="不好意思，这个我们跳过吧。")
+    r = LLMResponse(completion_text="这个可能不太合适吧。")
     await pl.on_llm_response(Ev("接着写"), r)
     check("灰区 judge=REFUSED 调用了 judge", main.judge_calls == 1)
     check("灰区 judge=REFUSED 触发转交", alt.alt_calls == 1, f"alt={alt.alt_calls}")
 
     # 4) 灰区 + judge 说 OK -> 不转交
     pl, main, alt = make(judge_answer="OK")
-    r = LLMResponse(completion_text="不好意思，这个我们跳过吧。")
+    r = LLMResponse(completion_text="这个可能不太合适吧。")
     await pl.on_llm_response(Ev("接着写"), r)
     check("灰区 judge=OK 调用了 judge", main.judge_calls == 1)
     check("灰区 judge=OK 不转交", alt.alt_calls == 0, f"alt={alt.alt_calls}")
 
     # 5) judge 无法解析 -> 按分数退化
     pl, main, alt = make(judge_answer="嗯……")
-    r = LLMResponse(completion_text="不好意思，这个我们跳过吧。")
+    r = LLMResponse(completion_text="这个可能不太合适吧。")
     await pl.on_llm_response(Ev("接着写"), r)
     check("judge 不可解析时退化不崩", isinstance(r.completion_text, str))
 
@@ -162,7 +162,7 @@ async def run():
 
     # 8) 关闭 LLM 判定 -> 灰区按 0.65 分界
     pl, main, alt = make(cfg_over={"soft_refusal_llm_judge": False})
-    r = LLMResponse(completion_text="不好意思，这个我们跳过吧。")
+    r = LLMResponse(completion_text="这个可能不太合适吧。")
     await pl.on_llm_response(Ev("接着写"), r)
     check("关闭 LLM 判定时不调 judge", main.judge_calls == 0)
 

@@ -287,7 +287,9 @@ class RefusalFailoverPlugin(Star):
             )
 
         # ---- Tier 1: cue scoring ----
-        info = score_refusal(text)
+        # context check off -> score on reply text alone (no request signal)
+        req = (event.message_str or "") if self.cfg.get("refusal_context_check", True) else ""
+        info = score_refusal(text, req)
         score = info["score"]
         high = float(self.cfg.get("soft_refusal_high", 0.85))
         low = float(self.cfg.get("soft_refusal_low", 0.45))
