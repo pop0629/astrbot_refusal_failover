@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-0.3.0-blue)
+![version](https://img.shields.io/badge/version-0.4.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -191,6 +191,35 @@ Tier 0 最可靠，值得让主模型配合：
 ```
 
 **不加强制标记也能工作**——Tier 1/2 就是为这种情况准备的。加了只是让判定更准、更省一次 LLM 调用。
+
+## 命令
+
+| 命令 | 作用 |
+|---|---|
+| `/切换子代理` | 当前会话改用备用提供商，直到手动切回 |
+| `/切换主模型` | 切回切换前的那个提供商 |
+| `/切换状态` | 查看当前用的是哪个、切回目标是谁 |
+| `/failover_card` | 查看记忆卡 |
+| `/failover_card_set <内容>` | 手动写入记忆卡 |
+
+手动切换走的是 AstrBot 原生的**会话级提供商覆盖**（`provider_manager.set_provider`），
+和 WebUI 里改会话提供商是同一个机制，所以：
+
+- 只影响当前会话，不影响别的会话和全局配置
+- 重启后由 AstrBot 自己的会话配置持久化，插件只是记录了「切回目标」
+- 切过去之后，插件自己的自动转交会暂停逻辑上不再需要（会话本来就在子代理上）
+
+**典型用法**——临时接管：
+
+```
+用户: /切换子代理
+Bot:  已切到子代理「xai」。
+      此前的主模型「deepseek」已保存，发送 /切换主模型 切回。
+
+（接下来几轮都是子代理在答）
+用户: /切换主模型
+Bot:  已切回主模型「deepseek」
+```
 
 ## 记忆卡
 

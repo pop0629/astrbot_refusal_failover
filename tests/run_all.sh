@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 cd ../..
-for t in test_engine test_style test_soft_refusal test_integration test_judge_integration; do
+for t in test_engine test_style test_soft_refusal test_integration test_judge_integration test_switch; do
     printf '\n=== %s ===\n' "$t"
     python3 "astrbot_refusal_failover/tests/$t.py"
 done

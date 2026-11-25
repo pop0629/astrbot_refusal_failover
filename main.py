@@ -414,5 +414,112 @@ class RefusalFailoverPlugin(Star):
         await self._save_card(event.unified_msg_origin, MemoryCard.parse(raw))
         yield event.plain_result("记忆卡已更新")
 
+    # ---------------- manual switching ----------------
+
+    def _switch_key(self, umo: str) -> str:
+        return f"switch:{umo}"
+
+    async def _get_switch_state(self, umo: str) -> dict:
+        raw = await self.get_kv_data(self._switch_key(umo), "")
+        if not raw:
+            return {}
+        try:
+            return json.loads(raw)
+        except Exception:
+            return {}
+
+    async def _set_switch_state(self, umo: str, state: dict) -> None:
+        await self.put_kv_data(self._switch_key(umo), json.dumps(state, ensure_ascii=False))
+
+    def _current_provider_id(self, umo: str) -> str:
+        """The provider this session is actually using right now."""
+        try:
+            prov = self.context.get_using_provider(umo)
+            return getattr(prov, "provider_config", {}).get("id", "") or getattr(prov, "provider_id", "")
+        except Exception:
+            return ""
+
+    async def _apply_provider(self, umo: str, provider_id: str) -> None:
+        """Switch this session's chat provider via AstrBot's native API."""
+        from astrbot.core.provider.entities import ProviderType
+
+        await self.context.provider_manager.set_provider(
+            provider_id, ProviderType.CHAT_COMPLETION, umo
+        )
+
+    @filter.command("切换子代理")
+    async def switch_to_alt(self, event: AstrMessageEvent):
+        """切到备用子代理接管当前会话"""
+        umo = event.unified_msg_origin
+        alt_id = str(self.cfg.get("alt_provider_id", "")).strip()
+        if not alt_id:
+            yield event.plain_result("还没配置备用提供商（插件配置 → 备用子代理提供商）")
+            return
+        if self._resolve_provider(alt_id) is None:
+            yield event.plain_result(f"找不到提供商「{alt_id}」，请检查配置")
+            return
+
+        state = await self._get_switch_state(umo)
+        if state.get("active") == "alt":
+            yield event.plain_result(f"已经在子代理「{alt_id}」上了，无需重复切换")
+            return
+
+        # remember where to go back to
+        prev = self._current_provider_id(umo)
+        try:
+            await self._apply_provider(umo, alt_id)
+        except Exception as e:
+            yield event.plain_result(f"切换失败：{e}")
+            return
+
+        await self._set_switch_state(umo, {"active": "alt", "prev": prev, "alt": alt_id})
+        yield event.plain_result(
+            f"已切到子代理「{alt_id}」。\n"
+            f"此前的主模型「{prev or '未记录'}」已保存，发送 /切换主模型 切回。"
+        )
+
+    @filter.command("切换主模型")
+    async def switch_to_main(self, event: AstrMessageEvent):
+        """切回主模型"""
+        umo = event.unified_msg_origin
+        state = await self._get_switch_state(umo)
+        if state.get("active") != "alt":
+            yield event.plain_result("当前没有在子代理上，无需切回")
+            return
+
+        prev = state.get("prev") or str(self.cfg.get("main_provider_id", "")).strip()
+        if not prev:
+            yield event.plain_result(
+                "没记录到原来的主模型。请到 AstrBot 服务提供商页面手动切换，"
+                "或在插件配置里填写「主模型提供商」后再试。"
+            )
+            return
+        if self._resolve_provider(prev) is None:
+            yield event.plain_result(f"原来的主模型「{prev}」已不可用，请手动切换")
+            return
+
+        try:
+            await self._apply_provider(umo, prev)
+        except Exception as e:
+            yield event.plain_result(f"切换失败：{e}")
+            return
+
+        await self._set_switch_state(umo, {"active": "main", "prev": prev})
+        yield event.plain_result(f"已切回主模型「{prev}」")
+
+    @filter.command("切换状态")
+    async def switch_status(self, event: AstrMessageEvent):
+        """查看当前手动切换状态"""
+        umo = event.unified_msg_origin
+        state = await self._get_switch_state(umo)
+        cur = self._current_provider_id(umo)
+        if state.get("active") == "alt":
+            yield event.plain_result(
+                f"当前：子代理「{state.get('alt')}」\n"
+                f"切回目标：「{state.get('prev') or '未记录'}」"
+            )
+        else:
+            yield event.plain_result(f"当前：主模型「{cur or '未知'}」\n发送 /切换子代理 可临时切到备用")
+
     async def terminate(self):
         pass
