@@ -5,17 +5,19 @@
     "default": true
   },
   "main_provider_id": {
-    "description": "主模型 provider ID（留空 = 用当前会话正在用的 provider）",
+    "description": "主模型提供商（留空 = 使用当前会话正在用的提供商；刷新记忆卡时也用它）",
     "type": "string",
-    "default": ""
+    "default": "",
+    "_special": "select_provider"
   },
   "alt_provider_id": {
-    "description": "备用子代理 provider ID（AstrBot 已配置的 provider 列表里的 ID）",
+    "description": "备用子代理提供商（从已配置的聊天提供商中选择）",
     "type": "string",
-    "default": "PROVIDER_ID"
+    "default": "",
+    "_special": "select_provider"
   },
   "alt_model": {
-    "description": "备用 provider 内指定模型名（留空 = 用该 provider 默认模型）",
+    "description": "备用提供商内指定模型名（留空 = 用该提供商的默认模型，推荐留空）",
     "type": "string",
     "default": ""
   },
@@ -35,9 +37,9 @@
     "default": "(?i)(我(无法|不能|不会)(生成|提供|撰写)该内容|I (can't|cannot|won't) (write|generate|provide) this)"
   },
   "style_brief": {
-    "description": "风格 brief，每次转交都附给子代理。写清人称、语域、句式、禁用项",
+    "description": "风格 brief，每次转交都附给子代理。只写禁令、不描述人称语域——人称语域交由真实前文样本决定，避免两者冲突",
     "type": "text",
-    "default": "人称: 第二人称。语域: 简洁直接，不用敬语。句式: 短句，少用列表。禁用: emoji、免责声明、元叙述（不要说“我将为你…”“作为 AI…”）。直接进入内容。"
+    "default": "人称、语域、句式：严格沿用【同一角色的真实前文】，不要改变。\n禁用：\n- emoji\n- 免责声明、免责话术\n- 元叙述（“作为AI”“我将为你”“以下是”“希望对你有帮助”）\n- 列表（除非前文本来就在用列表）\n- 结尾总结或升华（只输出本轮增量）"
   },
   "history_turns": {
     "description": "转交时携带的最近对话轮数",

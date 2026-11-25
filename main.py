@@ -153,11 +153,15 @@ class RefusalFailoverPlugin(Star):
         # ---- failover ----
         alt_id = str(self.cfg.get("alt_provider_id", "")).strip()
         if not alt_id or alt_id == "PROVIDER_ID":
-            logger.warning(f"[{PLUGIN_NAME}] alt_provider_id not configured, skip failover")
+            logger.warning(
+                f"[{PLUGIN_NAME}] 未选择备用提供商（插件配置 → 备用子代理提供商），跳过转交"
+            )
             return
         alt = self._resolve_provider(alt_id)
         if alt is None:
-            logger.warning(f"[{PLUGIN_NAME}] alt provider '{alt_id}' not found")
+            logger.warning(
+                f"[{PLUGIN_NAME}] 找不到提供商 '{alt_id}'，请确认它仍在服务提供商列表中且已启用"
+            )
             return
 
         turns = await self._recent_turns(event, int(self.cfg.get("history_turns", 8)))

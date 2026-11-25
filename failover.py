@@ -232,13 +232,15 @@ def build_failover_system_prompt(
         "你接管一段正在进行中的对话的下一轮输出。",
         "硬性要求：不要提及模型切换、不要道歉、不要说“作为AI/我将为你/以下是”、不要任何元叙述。",
         "直接把读者已经读到的那段文字往下写。读者不知道中间换过人。",
-        f"【风格要求】\n{style_brief}",
     ]
     if style_sample:
         blocks.append(
-            "【同一角色的真实前文（模仿它的句长、用词、标点密度、段落节奏，不要复制内容）】\n"
+            "【最高优先级：同一角色的真实前文】\n"
+            "下文出现的所有人称、语域、句式、标点密度、段落节奏，一律以此为准。\n"
+            "若【风格要求】里出现与它冲突的描述（例如人称不同），忽略风格要求里冲突的部分。\n"
             f"{style_sample}"
         )
+    blocks.append(f"【风格要求】\n{style_brief}")
     if memory:
         blocks.append(f"【记忆卡】\n{memory}")
     if refusal_reason:
