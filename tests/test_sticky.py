@@ -87,5 +87,13 @@ check("解析带标点", parse_sticky_judge("RELEASE.") is True)
 check("无法解析返回 None", parse_sticky_judge("嗯") is None)
 check("空返回 None", parse_sticky_judge("") is None)
 
+
+# ---- 默认关闭：C 扳机 judge_every=0 时永不触发 ----
+st = on_enter("ALT", judge_every=0)
+never = [evaluate_turn(st, max_turns=999, release_after_clean=999, judge_every=0)
+         for _ in range(10)]
+check("C 默认关闭：10 轮内一次都不触发", not any(d.needs_judge for d in never))
+check("C 关闭时不累积 judge_skip", st.judge_skip == 0, f"skip={st.judge_skip}")
+
 print(f"\n--- sticky 状态机: {ok}/{total} ---")
 sys.exit(0 if ok == total else 1)

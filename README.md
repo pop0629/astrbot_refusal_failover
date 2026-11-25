@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-0.6.0-blue)
+![version](https://img.shields.io/badge/version-0.6.1-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -178,7 +178,7 @@ overlap = |请求的内容 bigram ∩ 回复的 bigram| / |请求的 bigram|
 | `sticky_enabled` | true | 拒绝后保持子代理接管若干轮 |
 | `sticky_release_after` | 3 | 扳机A：连续多少轮正常后自动解除 |
 | `sticky_max_turns` | 10 | 硬上限，超过强制解除 |
-| `sticky_judge_every` | 3 | 扳机C 抽样间隔 |
+| `sticky_judge_every` | **0（关闭）** | 扳机C 抽样间隔，0=不启用 |
 | `sticky_judge_provider_id` | 空 | 扳机C 用哪个模型，留空即关闭 C |
 | `manual_switch_continuity` | true | 手动切换期间注入风格样本/记忆卡/接缝，与自动转交一致 |
 | `refusal_context_check` | true | 启用请求-回复关联度判据，识别用推迟或撒娇回避请求的软拒绝 |
@@ -211,9 +211,14 @@ Tier 0 最可靠，值得让主模型配合：
 | **C 抽样判定** | 每 N 轮一次 | 每隔 `sticky_judge_every` 轮问一次便宜模型「是否已回到正常问答」 |
 | **硬上限** | 0 | 超过 `sticky_max_turns`（默认 10）强制解除 |
 
-**为什么这样设计**：A 能解掉绝大多数会话，所以 C 只是兜底。C 默认**关闭**
-（`sticky_judge_provider_id` 留空即关闭），开启时请指定便宜的小模型——
-判定任务很简单，不需要主力模型，成本可降 10~20 倍。
+**为什么这样设计**：A 能解掉绝大多数会话，所以 C 只是兜底。
+
+C **默认完全关闭**（`sticky_judge_every=0`），因为启用它有一个代价：
+每插入一次判定请求，主对话的 prompt cache 前缀就可能被打断，
+缓存命中率下降反而可能让总成本上升。
+
+确实需要时：`sticky_judge_every` 填 >0，并同时指定 `sticky_judge_provider_id`
+为一个便宜的小模型（判定任务很简单，不需要主力模型）。
 
 ```python
 # 每轮的额外开销

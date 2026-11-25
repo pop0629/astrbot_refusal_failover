@@ -146,12 +146,12 @@
     "default": 10
   },
   "sticky_judge_every": {
-    "description": "扳机C：每隔多少轮做一次抽样判定（评审是否已回到正常问答）",
+    "description": "扳机C 抽样间隔。0 = 关闭（默认）。填 >0 时必须同时指定 sticky_judge_provider_id 才会生效",
     "type": "int",
-    "default": 3
+    "default": 0
   },
   "sticky_judge_provider_id": {
-    "description": "扳机C 用哪个提供商做判定，建议指定便宜小模型；留空则关闭扳机C，只靠扳机A",
+    "description": "扳机C 用哪个提供商做判定（建议指定便宜小模型）。留空 = 关闭扳机C，只靠扳机A与硬上限（默认）",
     "type": "string",
     "default": "",
     "_special": "select_provider"

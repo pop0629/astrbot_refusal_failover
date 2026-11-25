@@ -264,7 +264,7 @@ class RefusalFailoverPlugin(Star):
             from .sticky import on_enter
 
             st = on_enter(
-                alt_id, int(self.cfg.get("sticky_judge_every", 3))
+                alt_id, int(self.cfg.get("sticky_judge_every", 0))
             )
             await self._save_sticky(umo, st)
             if self.cfg.get("debug"):
@@ -352,7 +352,7 @@ class RefusalFailoverPlugin(Star):
             sticky,
             max_turns=int(self.cfg.get("sticky_max_turns", 10)),
             release_after_clean=int(self.cfg.get("sticky_release_after", 3)),
-            judge_every=int(self.cfg.get("sticky_judge_every", 3)),
+            judge_every=int(self.cfg.get("sticky_judge_every", 0)),
         )
 
         # ---- trigger C: sampling judge ----
