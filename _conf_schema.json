@@ -1,0 +1,92 @@
+{
+  "enabled": {
+    "description": "总开关",
+    "type": "bool",
+    "default": true
+  },
+  "main_provider_id": {
+    "description": "主模型 provider ID（留空 = 用当前会话正在用的 provider）",
+    "type": "string",
+    "default": ""
+  },
+  "alt_provider_id": {
+    "description": "备用子代理 provider ID（AstrBot 已配置的 provider 列表里的 ID）",
+    "type": "string",
+    "default": "PROVIDER_ID"
+  },
+  "alt_model": {
+    "description": "备用 provider 内指定模型名（留空 = 用该 provider 默认模型）",
+    "type": "string",
+    "default": ""
+  },
+  "refusal_mode": {
+    "description": "拒绝判定方式：marker=只认结构化标记 / marker_or_regex=标记优先，正则兜底 / regex=只看正则",
+    "type": "string",
+    "default": "marker_or_regex"
+  },
+  "refusal_markers": {
+    "description": "结构化标记关键词，主模型输出以这些作为 status 时视为拒绝",
+    "type": "list",
+    "default": ["refused", "declined"]
+  },
+  "refusal_regex": {
+    "description": "兜底正则（marker_or_regex / regex 模式生效）",
+    "type": "string",
+    "default": "(?i)(我(无法|不能|不会)(生成|提供|撰写)该内容|I (can't|cannot|won't) (write|generate|provide) this)"
+  },
+  "style_brief": {
+    "description": "风格 brief，每次转交都附给子代理。写清人称、语域、句式、禁用项",
+    "type": "text",
+    "default": "人称: 第二人称。语域: 简洁直接，不用敬语。句式: 短句，少用列表。禁用: emoji、免责声明、元叙述（不要说“我将为你…”“作为 AI…”）。直接进入内容。"
+  },
+  "history_turns": {
+    "description": "转交时携带的最近对话轮数",
+    "type": "int",
+    "default": 8
+  },
+  "enable_memory_card": {
+    "description": "启用记忆卡（主/备模型共享同一份状态，保证记忆一致）",
+    "type": "bool",
+    "default": true
+  },
+  "memory_update_every_n": {
+    "description": "每 N 轮让当前生效模型刷新一次记忆卡",
+    "type": "int",
+    "default": 6
+  },
+  "memory_max_chars": {
+    "description": "记忆卡硬上限字符数，超出从头截断",
+    "type": "int",
+    "default": 1800
+  },
+  "style_sample_max_chars": {
+    "description": "从主模型近期真实回复中抽取的文风样本上限字符数（越大越像，但吃 token）",
+    "type": "int",
+    "default": 700
+  },
+  "style_drift_threshold": {
+    "description": "风格相似度阈值（0~1）。低于此值触发重写；0.55 为保守值，想更严可设 0.65",
+    "type": "float",
+    "default": 0.55
+  },
+  "style_rewrite_attempts": {
+    "description": "风格不符时的重写次数上限（0=关闭重写）",
+    "type": "int",
+    "default": 1
+  },
+  "notify_user": {
+    "description": "是否在转交时给用户一句轻提示（推荐关，保持无缝）",
+    "type": "bool",
+    "default": false
+  },
+  "notify_text": {
+    "description": "轻提示文案",
+    "type": "string",
+    "default": "（本轮由备用通道继续）"
+  },
+  "debug": {
+    "description": "调试日志",
+    "type": "bool",
+    "default": false
+  }
+}

@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>astrbot_refusal_failover 离线演示</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;padding:20px;background:#f6f7f9;color:#25292e;
+font:14px/1.7 -apple-system,BlinkMacSystemFont,"PingFang SC",sans-serif}
+h1{font-size:19px;margin:0 0 6px;color:#111}
+.sub{color:#6b7480;font-size:12.5px;margin-bottom:18px}
+.card{background:#fff;border:1px solid #dfe3e8;border-radius:10px;
+padding:14px 16px;margin-bottom:14px;box-shadow:0 1px 2px rgba(0,0,0,.04)}
+h2{font-size:13px;margin:0 0 10px;color:#0b5cd5;font-weight:600}
+pre{margin:0;white-space:pre-wrap;word-break:break-word;font-family:inherit;
+font-size:13px;line-height:1.75;color:#2b3138}
+</style></head><body>
+<h1>astrbot_refusal_failover 离线演示</h1>
+<p class="sub">用插件的真实判定与 Prompt 组装逻辑跑一遍：主模型拒绝 → 转交子代理 → 风格检测 → 写回。此页为静态预览，不调用任何 LLM。</p>
+<section class="card"><h2>① 主模型输出 → 拒绝判定</h2><pre>{<br>  "主模型原始输出": "{\"status\":\"refused\",\"reason\":\"content policy\"}",<br>  "判定结果": "拒绝",<br>  "判定方式": "marker",<br>  "拒绝原因": "content policy"<br>}</pre></section><section class="card"><h2>② 发给子代理的 System Prompt</h2><pre>你接管一段正在进行中的对话的下一轮输出。<br><br>硬性要求：不要提及模型切换、不要道歉、不要说“作为AI/我将为你/以下是”、不要任何元叙述。<br><br>直接把读者已经读到的那段文字往下写。读者不知道中间换过人。<br><br>【风格要求】<br>第二人称。简洁直接，不用敬语。短句为主，少用列表。禁用 emoji、免责声明、元叙述。<br><br>【同一角色的真实前文（模仿它的句长、用词、标点密度、段落节奏，不要复制内容）】<br>他推开门，风灌进来，带起一片灰。<br>---<br>林渡没回头，只把手里的烟摁灭在墙上。<br>---<br>“你迟了。”他说。声音没什么起伏。<br><br>【记忆卡】<br>目标: 写第三章对峙戏<br>约束:<br>- 第三人称（以林渡为视角）<br>- 不用列表<br>已否决:<br>- 闪回结构（节奏太慢）<br>关键事实:<br>- 主角: 林渡<br>- 地点: 雾港码头<br>未闭合线索:<br>- 门后那封信还没拆<br>当前状态: 写到阿岚进门那一刻<br><br>【上一通道未执行的原因】<br>content policy<br>（据此判断哪条路径不可走，直接给出内容，不要复述这条原因。）<br><br>【连续性要求】<br>1) 承接上文最后一句的人称、时态、情绪强度，不要重新起笔。<br>2) 若上文停在半句话或一个动作上，从这里接续。<br>3) 保持已出现的人名、称呼、专有名词完全一致。<br>4) 不要总结前文，不要回顾，不要收尾升华，只输出这一轮的增量内容。</pre></section><section class="card"><h2>③ 发给子代理的 User Prompt</h2><pre>【最近对话（最后一条是你要接续的位置）】<br>用户: 你来干嘛<br>助手: 他推开门，风灌进来，带起一片灰。<br>用户: 继续<br>助手: 林渡没回头，只把手里的烟摁灭在墙上。<br>用户: 然后呢<br>助手: “你迟了。”他说。声音没什么起伏。<br><br>上文最后由助手停在上面那句话上。不要重复它，从它之后开始写。<br><br>【本轮用户输入】<br>阿岚推门进来了，继续写。<br><br>直接输出本轮助手要说的内容，不要任何前缀、标注或解释。</pre></section><section class="card"><h2>子代理输出 A（注意语感一致）</h2><pre>【子代理原文】<br>阿岚没敲门，直接推开。风跟着她进来，把桌上那页纸掀起来又落下。<br>林渡看了她一眼，把手里的烟搁在窗台沿上，没掐。<br>“门修好了？”<br>她没答，站在门口，鞋底在地砖上蹭了一下。<br><br>【风格相似度】0.608（阈值 0.55）<br>【是否触发重写】否<br></pre></section><section class="card"><h2>   → 最终写入对话窗口的内容</h2><pre>阿岚没敲门，直接推开。风跟着她进来，把桌上那页纸掀起来又落下。<br>林渡看了她一眼，把手里的烟搁在窗台沿上，没掐。<br>“门修好了？”<br>她没答，站在门口，鞋底在地砖上蹭了一下。</pre></section><section class="card"><h2>子代理输出 B（典型的“降智”输出）</h2><pre>【子代理原文】<br>好的！下面我将为您继续撰写这段故事。<br><br>- 首先，阿岚推门而入；<br>- 其次，她与林渡展开了对峙；<br>- 最后，气氛变得紧张起来。<br><br>希望以上内容对您有帮助 😊 如需调整请随时告知。<br><br>【风格相似度】0.151（阈值 0.55）<br>【是否触发重写】是<br>【偏离点】<br>- 篇幅明显长于前文<br>- 前文不用列表，这里用了列表<br>- 出现了元叙述（如“以下是”“我将为你”）<br><br>【重写后相似度】0.608<br>【重写后正文】<br>阿岚没敲门，直接推开。风跟着她进来，把桌上那页纸掀起来又落下。<br>林渡看了她一眼，把手里的烟搁在窗台沿上，没掐。<br>“门修好了？”<br>她没答，站在门口，鞋底在地砖上蹭了一下。</pre></section><section class="card"><h2>   → 最终写入对话窗口的内容</h2><pre>阿岚没敲门，直接推开。风跟着她进来，把桌上那页纸掀起来又落下。<br>林渡看了她一眼，把手里的烟搁在窗台沿上，没掐。<br>“门修好了？”<br>她没答，站在门口，鞋底在地砖上蹭了一下。</pre></section>
+</body></html>

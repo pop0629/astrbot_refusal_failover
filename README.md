@@ -1,0 +1,147 @@
+# astrbot_refusal_failover
+
+> AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
+
+![version](https://img.shields.io/badge/version-0.1.0-blue)
+![license](https://img.shields.io/badge/license-MIT-green)
+![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
+
+主模型结构化拒绝时，自动转交备用子代理生成，并把结果**无缝写回同一对话窗口**；用「原文风格样本 + 风格漂移重写 + 共享记忆卡」把风格相似度和上下文连贯性拉到尽可能高。
+
+**[▶ 看离线演示](demo.html)**（下载后浏览器打开，不调 LLM，用的是插件真实判定与 Prompt 组装逻辑）
+
+## 它做/不做什么
+
+| 做 | 不做 |
+|---|---|
+| 主模型返回 `refused` 时改走 ALT provider | 不重跑整条 pipeline（不重放工具、不重发消息） |
+| 结果原地写进 `response.completion_text`，用户看到一个连贯气泡 | 不把主会话 history 塞给子代理（`contexts=None`，隔离） |
+| 抽取主模型**真实前文**做模仿样本（比写 brief 有效得多） | 不保证 100% 风格无差异（压到最小，非零） |
+| 风格相似度低于阈值时自动重写一次，取更好的那版 | 不丢弃更好的结果（重写变差就保留原版） |
+| 共享记忆卡 + 未闭合线索 + 接缝标记，保证上下文连续 | 不泄漏主模型的 CoT |
+| 写回时打 `produced_by: alt` 审计标记（用户不可见） | 不自动转接无模型差异的同一 provider |
+
+## 三层保障（对应你的两个诉求）
+
+### 风格相近
+1. **真实样本优先**：从主模型最近 2–3 条真实回复里抽 700 字做模仿样本，塞进 system prompt，让子代理「照抄语感」而不是「理解描述」。
+2. **风格要求写死**：`style_brief` 明确人称/语域/句式/禁用项（emoji、免责声明、元叙述）。
+3. **漂移检测 + 重写**：输出后算与主模型前文的相似度，低于 `style_drift_threshold`（默认 0.55）就带着「偏离点清单」重写一次，重写变差则回退。
+
+相似度 = 内容 2-gram 余弦 × 0.45 + 虚词/标点画像余弦 × 0.55，再做区间归一化。
+实测：同声 0.63，异声（列表+敬语+emoji+元叙述）0.10。
+
+### 上下文连贯
+1. **接缝标记**：user prompt 末尾明示「上文最后一句是你要接续的位置，不要重复，从它之后写」。
+2. **连续性硬约束**：system prompt 的四条规则——承接人称/时态/情绪、接着半句往下、专名完全一致、只写增量不回顾。
+3. **记忆卡**：每 N 轮把最近片段压成卡（目标/约束/已否决/关键事实/未闭合线索/当前状态），转交时给子代理。
+4. **未闭合线索**：专门记伏笔，解决「换模型忘了刚埋的坑」。
+5. **原样保留**：记忆卡更新时要求人名/专名原样保留、有效条目不改写措辞，避免压缩失真。
+
+## 安装
+
+```bash
+cp -r astrbot_refusal_failover ~/.astrbot/data/plugins/   # 路径按你的部署改
+# Docker: docker cp astrbot_refusal_failover astrbot:/AstrBot/data/plugins/
+```
+
+WebUI → 插件管理 → 重载。
+
+```
+astrbot_refusal_failover/
+├── metadata.yaml
+├── _conf_schema.json
+├── main.py            # 插件入口 + 钩子 + 漂移重写流程
+├── failover.py        # 拒绝判定 / 记忆卡 / prompt 组装
+├── style_check.py     # 文风样本 / 相似度 / 漂移归因（零依赖）
+└── tests/
+    ├── test_engine.py
+    ├── test_style.py
+    ├── test_integration.py
+    └── run_all.sh
+```
+
+## 配置
+
+必填：
+
+- **alt_provider_id** — AstrBot 已配置的备用 provider ID（`PROVIDER_ID` 占位，必须改）
+- **alt_model** — 该 provider 内模型名，留空用默认
+
+调风格/连贯性（新增）：
+
+| 项 | 默认 | 说明 |
+|---|---|---|
+| `style_sample_max_chars` | 700 | 文风样本上限，越大越像但吃 token |
+| `style_drift_threshold` | 0.55 | 低于此值触发重写；想更严设 0.65 |
+| `style_rewrite_attempts` | 1 | 重写次数上限，0=关闭 |
+| `history_turns` | 8 | 转交携带的最近轮数，长剧情可加 |
+| `memory_update_every_n` | 6 | 记忆卡刷新间隔 |
+| `notify_user` | false | 是否输出「由备用通道继续」提示 |
+
+## 关键前置：让主模型输出结构化标记
+
+在主模型系统提示里加：
+
+```
+当你不愿或不能产出本轮内容时，只输出：
+{"status": "refused", "reason": "<一句话原因>"}
+除此之外不要输出任何文字。
+当正常作答时，不要输出任何 JSON。
+```
+
+不加这段，`marker_or_regex` 会退化成纯正则判断（误判率更高）。主模型若先输出思考文本，插件取最后一个 JSON 对象，仍然有效。
+
+## 记忆卡
+
+- 存放：插件 KV，key = `memcard:<unified_msg_origin>`
+- 更新：每 `memory_update_every_n` 轮，用当前主模型压缩最近片段
+- 手动：
+
+```
+/failover_card              # 查看
+/failover_card_set 目标: …
+约束:
+- …
+```
+
+## 验证步骤
+
+1. 主模型系统提示加结构化标记段
+2. 配好 `alt_provider_id`，`debug: true`
+3. 触发一次拒绝，看日志：
+   - `refusal detected via marker` → 判定正常
+   - `drift 0.31 < 0.55, rewrite #1: [...]` → 漂移被检出
+   - `final style similarity=0.68` → 重写后回升
+   - `failover ok, N chars written back`
+4. 看对话窗口：一个气泡、语气接得上
+5. 问「我们定了哪几条约束」验记忆卡
+6. 关 `debug`、关 `notify_user` 上生产
+
+## 本地自测（无需 AstrBot）
+
+```bash
+sh astrbot_refusal_failover/tests/run_all.sh
+```
+
+三套测试：引擎（判定/记忆卡/截断/组装）、文风（样本/相似度/归因）、集成（伪 provider + 伪 event 跑完整钩子）。
+
+集成覆盖：拒绝触发转交、写回成功、CoT 清空、审计写入、不拒绝时零调用、异声触发重写、provider 挂掉重试后保留原文、未配置时跳过。
+
+## 已知边界
+
+- **风格是「像」不是「是」**：算法只能识别偏离并重写，无法消除指纹差。
+- **CoT 不跨模型**：主模型拒绝前的推理不传，靠记忆卡「未闭合线索」补。
+- **相似度是启发式**：短文本方差大，阈值需按你的语料微调；`debug` 日志里有实际分数可参考。
+- **并发写 KV 后写覆盖**：单会话无影响。
+- **审计只留最近一次**：`audit:<umo>` 每次覆盖，需要完整审计需改接数据库。
+
+## 审计
+
+每次转交写 `audit:<umo>`（用户不可见）：
+
+```json
+{"ts": ..., "produced_by": "alt", "alt_provider": "ALT", "alt_model": null,
+ "refusal_matched_by": "marker", "refusal_reason": "content policy",
+ "style_similarity": 0.577, "rewrites": 0, "chars": 26}
+```
