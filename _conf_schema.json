@@ -29,7 +29,10 @@
   "refusal_markers": {
     "description": "结构化标记关键词，主模型输出以这些作为 status 时视为拒绝",
     "type": "list",
-    "default": ["refused", "declined"]
+    "default": [
+      "refused",
+      "declined"
+    ]
   },
   "refusal_regex": {
     "description": "兜底正则（marker_or_regex / regex 模式生效）",
@@ -60,6 +63,32 @@
     "description": "记忆卡硬上限字符数，超出从头截断",
     "type": "int",
     "default": 1800
+  },
+  "soft_refusal_check": {
+    "description": "启用软拒绝检测（识别“帮不上忙”“换个话题”这类不明确拒绝）。关闭后只认结构化标记和正则",
+    "type": "bool",
+    "default": true
+  },
+  "soft_refusal_high": {
+    "description": "软拒绝评分上限阈值。≥此值直接判定为拒绝，跳过 LLM 判定（省一次调用）",
+    "type": "float",
+    "default": 0.85
+  },
+  "soft_refusal_low": {
+    "description": "软拒绝评分下限阈值。≤此值直接判定为正常，不转交",
+    "type": "float",
+    "default": 0.45
+  },
+  "soft_refusal_llm_judge": {
+    "description": "分数落在高低阈值之间时，交给 LLM 二次判定（更准，但多一次小请求）",
+    "type": "bool",
+    "default": true
+  },
+  "judge_provider_id": {
+    "description": "二次判定用哪个提供商（留空 = 用当前会话的提供商；建议指定一个小模型省钱）",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
   },
   "style_sample_max_chars": {
     "description": "从主模型近期真实回复中抽取的文风样本上限字符数（越大越像，但吃 token）",

@@ -33,6 +33,12 @@ from .failover import (
     drift_reasons,
     tail_turns,
 )
+from .soft_refusal import (
+    build_judge_prompt,
+    parse_judge_answer,
+    score_refusal,
+    verdict_reason,
+)
 from .style_check import build_style_sample, drift_report, style_drift
 
 PLUGIN_NAME = "astrbot_refusal_failover"
@@ -133,22 +139,17 @@ class RefusalFailoverPlugin(Star):
         if not text.strip():
             return
 
-        verdict: RefusalVerdict = detect_refusal(
-            text,
-            mode=str(self.cfg.get("refusal_mode", "marker_or_regex")),
-            markers=list(self.cfg.get("refusal_markers", ["refused", "declined"])),
-            pattern=str(self.cfg.get("refusal_regex", "")),
-        )
-
         umo = event.unified_msg_origin
         card = await self._load_card(umo)
+
+        verdict: RefusalVerdict = await self._judge_refusal(event, text)
 
         if not verdict.refused:
             await self._maybe_refresh_memory(event, umo, card, text, None)
             return
 
         if self.cfg.get("debug"):
-            logger.info(f"[{PLUGIN_NAME}] refusal detected via {verdict.matched_by}: {verdict.reason[:120]}")
+            logger.info(f"[{PLUGIN_NAME}] refusal detected via {verdict.matched_by}: {verdict.reason[:160]}")
 
         # ---- failover ----
         alt_id = str(self.cfg.get("alt_provider_id", "")).strip()
@@ -252,6 +253,83 @@ class RefusalFailoverPlugin(Star):
             logger.info(f"[{PLUGIN_NAME}] failover ok, {len(alt_text)} chars written back")
 
         await self._maybe_refresh_memory(event, umo, card, alt_text, current)
+
+    # ---------------- refusal judgement (3 tiers) ----------------
+
+    async def _judge_refusal(self, event: AstrMessageEvent, text: str) -> RefusalVerdict:
+        """Tier 0 marker -> Tier 1 cue scoring -> Tier 2 LLM confirmation."""
+
+        # ---- Tier 0: structured marker (definitive) ----
+        marker_verdict = detect_refusal(
+            text,
+            mode="marker",
+            markers=list(self.cfg.get("refusal_markers", ["refused", "declined"])),
+            pattern="",
+        )
+        if marker_verdict.refused:
+            return marker_verdict
+
+        mode = str(self.cfg.get("refusal_mode", "marker_or_regex"))
+
+        # legacy pure-regex mode still supported
+        if mode == "regex":
+            return detect_refusal(
+                text, mode="regex", markers=[],
+                pattern=str(self.cfg.get("refusal_regex", "")),
+            )
+
+        if not self.cfg.get("soft_refusal_check", True):
+            # legacy behaviour: marker_or_regex without scoring
+            return detect_refusal(
+                text, mode="marker_or_regex",
+                markers=list(self.cfg.get("refusal_markers", ["refused", "declined"])),
+                pattern=str(self.cfg.get("refusal_regex", "")),
+            )
+
+        # ---- Tier 1: cue scoring ----
+        info = score_refusal(text)
+        score = info["score"]
+        high = float(self.cfg.get("soft_refusal_high", 0.85))
+        low = float(self.cfg.get("soft_refusal_low", 0.45))
+
+        if score >= high:
+            return RefusalVerdict(True, verdict_reason(info), "soft-high")
+        if score <= low:
+            return RefusalVerdict(False, verdict_reason(info), "soft-low")
+
+        # ---- Tier 2: borderline -> ask a model ----
+        if not self.cfg.get("soft_refusal_llm_judge", True):
+            return RefusalVerdict(score >= 0.65, verdict_reason(info), "soft-borderline")
+
+        judged = await self._llm_judge(event, text)
+        if judged is None:
+            return RefusalVerdict(score >= 0.65, verdict_reason(info, None), "soft-borderline")
+        return RefusalVerdict(judged, verdict_reason(info, judged), "judge")
+
+    async def _llm_judge(self, event: AstrMessageEvent, reply: str) -> bool | None:
+        """Ask a model whether the reply refused the request. None = unavailable."""
+        umo = event.unified_msg_origin
+        try:
+            pid = str(self.cfg.get("judge_provider_id", "")).strip()
+            prov = self._resolve_provider(pid) if pid else self.context.get_using_provider(umo)
+            if prov is None:
+                return None
+            prompt = build_judge_prompt(event.message_str or "", reply)
+            r = await prov.text_chat(
+                prompt=prompt,
+                session_id=f"{umo}:judge",
+                contexts=None,
+                system_prompt="你是严格的分类器，只输出 REFUSED 或 OK。",
+            )
+            raw = r.completion_text or ""
+            ans = parse_judge_answer(raw)
+            if self.cfg.get("debug"):
+                logger.info(f"[{PLUGIN_NAME}] judge answer={raw!r} -> {ans}")
+            return ans
+        except Exception as e:
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] judge failed: {e}")
+            return None
 
     async def _call_alt(self, alt, umo: str, sys_prompt: str, user_prompt: str, model):
         """Call the ALT provider with isolation; one retry on failure."""
