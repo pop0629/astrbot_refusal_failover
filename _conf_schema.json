@@ -129,5 +129,36 @@
     "description": "手动切换到子代理（/fa）期间，自动注入风格样本、记忆卡与连续性要求，效果与自动转交一致",
     "type": "bool",
     "default": true
+  },
+  "sticky_enabled": {
+    "description": "自动转交后保持由子代理接管若干轮（sticky）。关闭则每轮独立，被拒才救场",
+    "type": "bool",
+    "default": true
+  },
+  "sticky_release_after": {
+    "description": "扳机A（零成本）：连续多少轮正常回复后自动解除保留",
+    "type": "int",
+    "default": 3
+  },
+  "sticky_max_turns": {
+    "description": "硬上限：最多保留多少轮后强制解除，防止无限停留",
+    "type": "int",
+    "default": 10
+  },
+  "sticky_judge_every": {
+    "description": "扳机C：每隔多少轮做一次抽样判定（评审是否已回到正常问答）",
+    "type": "int",
+    "default": 3
+  },
+  "sticky_judge_provider_id": {
+    "description": "扳机C 用哪个提供商做判定，建议指定便宜小模型；留空则关闭扳机C，只靠扳机A",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
+  "sticky_notify_on_release": {
+    "description": "解除保留时在回复末尾加一句提示",
+    "type": "bool",
+    "default": false
   }
 }

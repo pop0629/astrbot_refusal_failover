@@ -142,6 +142,13 @@ class RefusalFailoverPlugin(Star):
         umo = event.unified_msg_origin
         card = await self._load_card(umo)
 
+        sticky = await self._get_sticky(umo)
+
+        # ---- sticky mode: route this turn to the ALT provider as well ----
+        if sticky.active:
+            await self._serve_sticky_turn(event, response, umo, card, sticky, text)
+            return
+
         verdict: RefusalVerdict = await self._judge_refusal(event, text)
 
         if not verdict.refused:
@@ -252,7 +259,145 @@ class RefusalFailoverPlugin(Star):
         if self.cfg.get("debug"):
             logger.info(f"[{PLUGIN_NAME}] failover ok, {len(alt_text)} chars written back")
 
+        # ---- enter sticky mode (optional) ----
+        if self.cfg.get("sticky_enabled", False):
+            from .sticky import on_enter
+
+            st = on_enter(
+                alt_id, int(self.cfg.get("sticky_judge_every", 3))
+            )
+            await self._save_sticky(umo, st)
+            if self.cfg.get("debug"):
+                logger.info(f"[{PLUGIN_NAME}] sticky mode entered (alt={alt_id})")
+
         await self._maybe_refresh_memory(event, umo, card, alt_text, current)
+
+    # ---------------- sticky serving ----------------
+
+    def _sticky_key(self, umo: str) -> str:
+        return f"sticky:{umo}"
+
+    async def _get_sticky(self, umo: str):
+        from .sticky import StickyState
+
+        raw = await self.get_kv_data(self._sticky_key(umo), "")
+        if not raw:
+            return StickyState()
+        try:
+            return StickyState.from_json(json.loads(raw))
+        except Exception:
+            return StickyState()
+
+    async def _save_sticky(self, umo: str, state) -> None:
+        await self.put_kv_data(
+            self._sticky_key(umo), json.dumps(state.to_json(), ensure_ascii=False)
+        )
+
+    async def _clear_sticky(self, umo: str) -> None:
+        await self.put_kv_data(self._sticky_key(umo), "")
+
+    async def _serve_sticky_turn(
+        self, event, response, umo: str, card, sticky, main_text: str
+    ) -> None:
+        """A turn while sticky: replace main output with ALT output, then
+        advance the release state machine."""
+        from .sticky import (
+            build_sticky_judge_prompt,
+            evaluate_turn,
+            on_turn_had_signal,
+            parse_sticky_judge,
+        )
+
+        alt_id = sticky.alt or str(self.cfg.get("alt_provider_id", "")).strip()
+        alt = self._resolve_provider(alt_id)
+        if alt is None:
+            await self._clear_sticky(umo)
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] sticky alt gone ({alt_id}), released")
+            return
+
+        turns = await self._recent_turns(event, int(self.cfg.get("history_turns", 8)))
+        current = event.message_str or ""
+        if turns and turns[-1][0] == "user":
+            turns = turns[:-1]
+
+        style = str(self.cfg.get("style_brief", ""))
+        style_sample = await self._main_style_sample(event)
+        memory = (
+            card.render(int(self.cfg.get("memory_max_chars", 1800)))
+            if self.cfg.get("enable_memory_card", True)
+            else ""
+        )
+        sys_prompt = build_failover_system_prompt(style, memory, "", style_sample)
+        user_prompt = build_failover_user_prompt(turns, current)
+        model = str(self.cfg.get("alt_model", "")).strip() or None
+
+        alt_text = await self._call_alt(alt, umo, sys_prompt, user_prompt, model)
+        if not alt_text:
+            # ALT failed mid-sticky: release so the user is not stuck
+            await self._clear_sticky(umo)
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] sticky alt returned empty, released")
+            return
+
+        response.completion_text = alt_text
+        response.reasoning_content = None
+
+        # did this turn still look like a refusal? then the clean streak resets
+        info = score_refusal(alt_text, current)
+        if info["score"] >= float(self.cfg.get("soft_refusal_low", 0.45)):
+            on_turn_had_signal(sticky)
+
+        decision = evaluate_turn(
+            sticky,
+            max_turns=int(self.cfg.get("sticky_max_turns", 10)),
+            release_after_clean=int(self.cfg.get("sticky_release_after", 3)),
+            judge_every=int(self.cfg.get("sticky_judge_every", 3)),
+        )
+
+        # ---- trigger C: sampling judge ----
+        if decision.needs_judge and self.cfg.get("sticky_judge_provider_id", ""):
+            recent = "\n".join(f"{'用户' if r == 'user' else '助手'}: {t}" for r, t in turns[-4:])
+            recent += f"\n用户: {current}\n助手: {alt_text}"
+            verdict_release = await self._sticky_sampling_judge(umo, recent)
+            if verdict_release is True:
+                decision.release = True
+                decision.reason = "抽样判定：已回到正常问答"
+
+        if decision.release:
+            await self._clear_sticky(umo)
+            if self.cfg.get("debug"):
+                logger.info(f"[{PLUGIN_NAME}] sticky released: {decision.reason}")
+            if self.cfg.get("sticky_notify_on_release", False):
+                response.completion_text = alt_text + "\n\n（已切回主模型）"
+        else:
+            await self._save_sticky(umo, sticky)
+
+        await self._maybe_refresh_memory(event, umo, card, alt_text, current)
+
+    async def _sticky_sampling_judge(self, umo: str, recent_text: str) -> bool | None:
+        """Trigger C: cheap sampling judge. Returns True=release."""
+        from .sticky import build_sticky_judge_prompt, parse_sticky_judge
+
+        pid = str(self.cfg.get("sticky_judge_provider_id", "")).strip()
+        prov = self._resolve_provider(pid)
+        if prov is None:
+            return None
+        try:
+            r = await prov.text_chat(
+                prompt=build_sticky_judge_prompt(recent_text),
+                session_id=f"{umo}:stickyjudge",
+                contexts=None,
+                system_prompt="你是严格的分类器，只输出 RELEASE 或 KEEP。",
+            )
+            ans = parse_sticky_judge(r.completion_text or "")
+            if self.cfg.get("debug"):
+                logger.info(f"[{PLUGIN_NAME}] sticky judge -> {ans}")
+            return ans
+        except Exception as e:
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] sticky judge failed: {e}")
+            return None
 
     # ---------------- refusal judgement (3 tiers) ----------------
 
@@ -550,9 +695,17 @@ class RefusalFailoverPlugin(Star):
 
     @filter.command("fm")
     async def switch_to_main(self, event: AstrMessageEvent):
-        """切回主模型"""
+        """切回主模型（同时解除 sticky 保留状态）"""
         umo = event.unified_msg_origin
         state = await self._get_switch_state(umo)
+
+        # sticky 模式下手动切回：清状态即可，provider 本来就是主模型
+        sticky = await self._get_sticky(umo)
+        if sticky.active and state.get("active") != "alt":
+            await self._clear_sticky(umo)
+            yield event.plain_result("已解除自动保留，这一轮起回到主模型")
+            return
+
         if state.get("active") != "alt":
             yield event.plain_result("当前没有在子代理上，无需切回")
             return
@@ -579,17 +732,32 @@ class RefusalFailoverPlugin(Star):
 
     @filter.command("fs")
     async def switch_status(self, event: AstrMessageEvent):
-        """查看当前手动切换状态"""
+        """查看当前切换/保留状态"""
         umo = event.unified_msg_origin
         state = await self._get_switch_state(umo)
+        sticky = await self._get_sticky(umo)
         cur = self._current_provider_id(umo)
+
         if state.get("active") == "alt":
             yield event.plain_result(
-                f"当前：子代理「{state.get('alt')}」\n"
-                f"切回目标：「{state.get('prev') or '未记录'}」"
+                f"当前：子代理「{state.get('alt')}」（手动切换）\n"
+                f"切回目标：「{state.get('prev') or '未记录'}」\n"
+                f"发送 /fm 切回"
             )
-        else:
-            yield event.plain_result(f"当前：主模型「{cur or '未知'}」\n发送 /fa 可临时切到备用")
+            return
+
+        if sticky.active:
+            yield event.plain_result(
+                f"当前：主模型「{cur or '未知'}」\n"
+                f"自动保留中：拒绝后由子代理「{sticky.alt}」接管，已持续 {sticky.turns} 轮\n"
+                f"连续正常 {sticky.streak} 轮后将自动解除\n"
+                f"发送 /fm 可立即解除"
+            )
+            return
+
+        yield event.plain_result(
+            f"当前：主模型「{cur or '未知'}」\n发送 /fa 可临时切到备用"
+        )
 
     async def terminate(self):
         pass

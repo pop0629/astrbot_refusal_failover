@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-0.5.0-blue)
+![version](https://img.shields.io/badge/version-0.6.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -175,6 +175,11 @@ overlap = |请求的内容 bigram ∩ 回复的 bigram| / |请求的 bigram|
 | `soft_refusal_low` | 0.45 | ≤此值直接判正常 |
 | `soft_refusal_llm_judge` | true | 灰区是否走 LLM 判定 |
 | `judge_provider_id` | 空 | 二次判定用哪个提供商，建议指定小模型省钱；留空用当前会话的 |
+| `sticky_enabled` | true | 拒绝后保持子代理接管若干轮 |
+| `sticky_release_after` | 3 | 扳机A：连续多少轮正常后自动解除 |
+| `sticky_max_turns` | 10 | 硬上限，超过强制解除 |
+| `sticky_judge_every` | 3 | 扳机C 抽样间隔 |
+| `sticky_judge_provider_id` | 空 | 扳机C 用哪个模型，留空即关闭 C |
 | `manual_switch_continuity` | true | 手动切换期间注入风格样本/记忆卡/接缝，与自动转交一致 |
 | `refusal_context_check` | true | 启用请求-回复关联度判据，识别用推迟或撒娇回避请求的软拒绝 |
 
@@ -192,6 +197,44 @@ Tier 0 最可靠，值得让主模型配合：
 ```
 
 **不加强制标记也能工作**——Tier 1/2 就是为这种情况准备的。加了只是让判定更准、更省一次 LLM 调用。
+
+## Sticky 保留模式
+
+默认开启。自动转交命中后，接下来几轮**继续由子代理接管**，而不是立刻回主模型。
+
+**三个解除扳机，按成本排序**：
+
+| 扳机 | 成本 | 触发条件 |
+|---|---|---|
+| **A 连续正常** | 0 | 连续 `sticky_release_after`（默认 3）轮没有拒绝迹象 |
+| **B 手动** | 0 | 发 `/fm` 立即解除 |
+| **C 抽样判定** | 每 N 轮一次 | 每隔 `sticky_judge_every` 轮问一次便宜模型「是否已回到正常问答」 |
+| **硬上限** | 0 | 超过 `sticky_max_turns`（默认 10）强制解除 |
+
+**为什么这样设计**：A 能解掉绝大多数会话，所以 C 只是兜底。C 默认**关闭**
+（`sticky_judge_provider_id` 留空即关闭），开启时请指定便宜的小模型——
+判定任务很简单，不需要主力模型，成本可降 10~20 倍。
+
+```python
+# 每轮的额外开销
+扳机 A：0 token
+扳机 C：仅每 N 轮一次，且用小模型
+硬上限：0
+```
+
+**状态可见**：`/fs` 会显示
+
+```
+当前：主模型「deepseek」
+自动保留中：拒绝后由子代理「xai」接管，已持续 2 轮
+连续正常 1 轮后将自动解除
+发送 /fm 可立即解除
+```
+
+**关闭方式**：`sticky_enabled: false` 回到逐轮独立——每轮都由主模型先答，被拒才救场。
+
+**安全兜底**：sticky 期间若子代理不可用（provider 被删、返回空），
+立即自动释放，用户不会卡在无人应答的状态。
 
 ## 命令
 
