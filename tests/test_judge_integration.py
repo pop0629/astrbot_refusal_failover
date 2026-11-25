@@ -14,6 +14,8 @@ ev = types.ModuleType("astrbot.api.event")
 class _F:
     def on_llm_response(self, *a, **k):
         return lambda fn, *x, **y: fn
+    def on_llm_request(self, *a, **k):
+        return lambda fn, *x, **y: fn
     def command(self, *a, **k):
         return lambda fn, *x, **y: fn
 ev.filter = _F(); ev.AstrMessageEvent = object

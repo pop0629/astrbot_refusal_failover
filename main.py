@@ -414,6 +414,76 @@ class RefusalFailoverPlugin(Star):
         await self._save_card(event.unified_msg_origin, MemoryCard.parse(raw))
         yield event.plain_result("记忆卡已更新")
 
+    # ---------------- manual-switch continuity injection ----------------
+
+    @filter.on_llm_request()
+    async def inject_continuity(self, event: AstrMessageEvent, req):
+        """While the session is on the ALt provider (manual switch), give it the
+        same continuity scaffolding the automatic failover uses:
+        real style sample + seam marker + memory card.
+
+        Without this, a manually switched session silently loses all the
+        coherence machinery, which is the main reason switching felt jarring.
+        """
+        if not self.cfg.get("manual_switch_continuity", True):
+            return
+
+        umo = event.unified_msg_origin
+        state = await self._get_switch_state(umo)
+        if state.get("active") != "alt":
+            return
+
+        # Only inject once per request; guard against double-registration.
+        if getattr(req, "_failover_injected", False):
+            return
+        try:
+            req._failover_injected = True  # type: ignore[attr-defined]
+        except Exception:
+            pass
+
+        style = str(self.cfg.get("style_brief", ""))
+        style_sample = await self._main_style_sample(event)
+        parts: list[str] = []
+
+        if style_sample:
+            parts.append(
+                "【最高优先级：同一角色的真实前文】\n"
+                "下文出现的所有人称、语域、句式、标点密度、段落节奏，一律以此为准。\n"
+                "若【风格要求】里出现与它冲突的描述（例如人称不同），忽略风格要求里冲突的部分。\n"
+                f"{style_sample}"
+            )
+        if style:
+            parts.append(f"【风格要求】\n{style}")
+        if self.cfg.get("enable_memory_card", True):
+            card = await self._load_card(umo)
+            mem = card.render(int(self.cfg.get("memory_max_chars", 1800)))
+            if mem:
+                parts.append(f"【记忆卡】\n{mem}")
+        parts.append(
+            "【连续性要求】\n"
+            "1) 承接上文最后一句的人称、时态、情绪强度，不要重新起笔。\n"
+            "2) 若上文停在半句话或一个动作上，从这里接续。\n"
+            "3) 保持已出现的人名、称呼、专有名词完全一致。\n"
+            "4) 不要总结前文，不要回顾，不要收尾升华，只输出这一轮的增量内容。\n"
+            "5) 不要提及模型切换，不要说“好的，我们继续”这类过渡语。"
+        )
+
+        block = "\n\n".join(parts)
+        req.system_prompt = (req.system_prompt or "") + "\n\n" + block
+
+        # mark the seam on the last assistant turn so the model does not repeat it
+        try:
+            ctxs = req.contexts or []
+            for m in reversed(ctxs):
+                if m.get("role") == "assistant":
+                    m["_seam_here"] = True
+                    break
+        except Exception:
+            pass
+
+        if self.cfg.get("debug"):
+            logger.info(f"[{PLUGIN_NAME}] injected continuity block ({len(block)} chars) for {umo}")
+
     # ---------------- manual switching ----------------
 
     def _switch_key(self, umo: str) -> str:

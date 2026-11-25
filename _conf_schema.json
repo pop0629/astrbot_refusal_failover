@@ -124,5 +124,10 @@
     "description": "调试日志",
     "type": "bool",
     "default": false
+  },
+  "manual_switch_continuity": {
+    "description": "手动切换到子代理（/fa）期间，自动注入风格样本、记忆卡与连续性要求，效果与自动转交一致",
+    "type": "bool",
+    "default": true
   }
 }

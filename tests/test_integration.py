@@ -23,6 +23,10 @@ class _F:
         def deco(fn, *aa, **kk):
             return fn
         return deco
+    def on_llm_request(self, *a, **k):
+        def deco(fn, *aa, **kk):
+            return fn
+        return deco
     def command(self, *a, **k):
         def deco(fn, *aa, **kk):
             return fn

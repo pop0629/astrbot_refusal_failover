@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-0.4.0-blue)
+![version](https://img.shields.io/badge/version-0.5.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -175,6 +175,7 @@ overlap = |请求的内容 bigram ∩ 回复的 bigram| / |请求的 bigram|
 | `soft_refusal_low` | 0.45 | ≤此值直接判正常 |
 | `soft_refusal_llm_judge` | true | 灰区是否走 LLM 判定 |
 | `judge_provider_id` | 空 | 二次判定用哪个提供商，建议指定小模型省钱；留空用当前会话的 |
+| `manual_switch_continuity` | true | 手动切换期间注入风格样本/记忆卡/接缝，与自动转交一致 |
 | `refusal_context_check` | true | 启用请求-回复关联度判据，识别用推迟或撒娇回避请求的软拒绝 |
 
 **灵敏度怎么调**：想让接替更灵敏，把 `soft_refusal_low` 调低（如 `0.30`），更多边界情况会进 LLM 判定；想省调用，把 `soft_refusal_high` 调低（如 `0.70`），更多直接判定不走 LLM。
@@ -208,6 +209,20 @@ Tier 0 最可靠，值得让主模型配合：
 - 只影响当前会话，不影响别的会话和全局配置
 - 重启后由 AstrBot 自己的会话配置持久化，插件只是记录了「切回目标」
 - 切过去之后，插件自己的自动转交会暂停逻辑上不再需要（会话本来就在子代理上）
+
+### 切换后的连贯性与自动转交一致
+
+手动切换（`/fa`）期间，插件通过 `on_llm_request` 钩子注入与自动转交**完全相同**的脚手架：
+
+- 主模型真实文风样本（人称/语域/句式以此为准）
+- 风格要求
+- 记忆卡（含未闭合线索）
+- 四条连续性要求 + 不要提及切换
+
+所以切过去之后不会出现「语气突变、重新寒暄、忘了伏笔」的情况。
+由 `manual_switch_continuity` 控制（默认开）；关闭则退回 AstrBot 原生行为，仅有内容连续、没有风格保护。
+
+切回 `/fm` 后自动停止注入。
 
 **典型用法**——临时接管：
 
