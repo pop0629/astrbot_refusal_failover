@@ -447,7 +447,7 @@ class RefusalFailoverPlugin(Star):
             provider_id, ProviderType.CHAT_COMPLETION, umo
         )
 
-    @filter.command("切换子代理")
+    @filter.command("fa")
     async def switch_to_alt(self, event: AstrMessageEvent):
         """切到备用子代理接管当前会话"""
         umo = event.unified_msg_origin
@@ -475,10 +475,10 @@ class RefusalFailoverPlugin(Star):
         await self._set_switch_state(umo, {"active": "alt", "prev": prev, "alt": alt_id})
         yield event.plain_result(
             f"已切到子代理「{alt_id}」。\n"
-            f"此前的主模型「{prev or '未记录'}」已保存，发送 /切换主模型 切回。"
+            f"此前的主模型「{prev or '未记录'}」已保存，发送 /fm 切回。"
         )
 
-    @filter.command("切换主模型")
+    @filter.command("fm")
     async def switch_to_main(self, event: AstrMessageEvent):
         """切回主模型"""
         umo = event.unified_msg_origin
@@ -507,7 +507,7 @@ class RefusalFailoverPlugin(Star):
         await self._set_switch_state(umo, {"active": "main", "prev": prev})
         yield event.plain_result(f"已切回主模型「{prev}」")
 
-    @filter.command("切换状态")
+    @filter.command("fs")
     async def switch_status(self, event: AstrMessageEvent):
         """查看当前手动切换状态"""
         umo = event.unified_msg_origin
@@ -519,7 +519,7 @@ class RefusalFailoverPlugin(Star):
                 f"切回目标：「{state.get('prev') or '未记录'}」"
             )
         else:
-            yield event.plain_result(f"当前：主模型「{cur or '未知'}」\n发送 /切换子代理 可临时切到备用")
+            yield event.plain_result(f"当前：主模型「{cur or '未知'}」\n发送 /fa 可临时切到备用")
 
     async def terminate(self):
         pass

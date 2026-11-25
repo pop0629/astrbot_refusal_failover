@@ -94,7 +94,7 @@ async def main():
     evt = Ev()
     msg = await run_cmd(p.switch_to_alt, p, evt)
     check("切到子代理成功", ctx.provider_manager.current == "ALT", msg[:30])
-    check("提示包含切回指令", "/切换主模型" in msg)
+    check("提示包含切回指令", "/fm" in msg)
     st = await p._get_switch_state(evt.unified_msg_origin)
     check("记录了原 provider", st.get("prev") == "MAIN", str(st))
 
