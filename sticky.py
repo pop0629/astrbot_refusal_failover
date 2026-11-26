@@ -37,6 +37,7 @@ class StickyState:
     streak: int = 0          # consecutive non-refusal turns
     judge_skip: int = 0      # turns remaining before the next sampling judge
     turns: int = 0           # total sticky turns
+    release_enabled: bool = True  # False = only /fm or hard cap can release
 
     def to_json(self) -> dict:
         return {
@@ -46,6 +47,7 @@ class StickyState:
             "streak": self.streak,
             "judge_skip": self.judge_skip,
             "turns": self.turns,
+            "release_enabled": self.release_enabled,
         }
 
     @classmethod
@@ -59,6 +61,7 @@ class StickyState:
             streak=int(raw.get("streak", 0)),
             judge_skip=int(raw.get("judge_skip", 0)),
             turns=int(raw.get("turns", 0)),
+            release_enabled=bool(raw.get("release_enabled", True)),
         )
 
 
@@ -69,8 +72,13 @@ class ReleaseDecision:
     needs_judge: bool = False   # True -> caller should run trigger C this turn
 
 
-def on_enter(alt_id: str, judge_every: int) -> StickyState:
-    """Called the moment an automatic failover succeeds."""
+def on_enter(alt_id: str, judge_every: int, sticky_release: bool = True) -> StickyState:
+    """Called the moment a failover succeeds.
+
+    sticky_release=False means the user explicitly asked for ALT (a /n marker):
+    answering well is the expected outcome, not a signal to hand control back,
+    so trigger A is disabled and only /fm or the hard cap releases.
+    """
     return StickyState(
         active=True,
         alt=alt_id,
@@ -78,6 +86,7 @@ def on_enter(alt_id: str, judge_every: int) -> StickyState:
         streak=0,
         judge_skip=max(0, judge_every - 1),
         turns=1,
+        release_enabled=sticky_release,
     )
 
 
@@ -104,9 +113,9 @@ def evaluate_turn(
     if max_turns > 0 and state.turns > max_turns:
         return ReleaseDecision(True, f"达到最长保留轮数 {max_turns}")
 
-    # trigger A
+    # trigger A (skipped when the user explicitly asked for ALT via /n)
     state.streak += 1
-    if release_after_clean > 0 and state.streak >= release_after_clean:
+    if state.release_enabled and release_after_clean > 0 and state.streak >= release_after_clean:
         return ReleaseDecision(
             True, f"连续 {release_after_clean} 轮正常回复"
         )

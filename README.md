@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-0.8.0-blue)
+![version](https://img.shields.io/badge/version-0.9.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -101,12 +101,31 @@ astrbot_refusal_failover/
 
 | 行为 | 说明 |
 |---|---|
-| 用完即弃 | 只影响这一轮，下一轮自动回主模型 |
+| **持续接管** | 进入 sticky，后续轮次继续由子代理作答，不会因"答得好"自动放手 |
 | 自动剥离 | 标记不会传给模型，模型看不到 `/n` |
 | 只认行尾 | `路径 /n/abc`、`/normal`、句中 `/n` 都不误触 |
 | 优先级最高 | 即使词表判定为正常，标记也强制转交 |
 
-**为什么不做成持久状态**：忘了撤销会导致后续所有对话都走备用模型，这是最糟的失败模式。一轮一授权更安全。
+**解除方式**（与手动切换 `/fa` 一致）：
+
+| 方式 | 说明 |
+|---|---|
+| `/fm` | 立即切回主模型 |
+| 硬上限 | 超过 `marker_sticky_max_turns`（默认 50）强制解除 |
+| 子代理失效 | provider 不可用时自动释放，不会卡住 |
+
+**与自动转交的关键差异**：
+
+```
+自动转交的 sticky：连续 3 轮正常 -> 自动回主模型
+/n 触发的 sticky：连续正常不解除，只有 /fm 或硬上限才解除
+```
+
+理由：`/n` 是你**主动要求**的，子代理答得好是预期结果，不是"可以还回去了"的信号。
+而自动转交是救场，恢复正常后自然该交还控制权。
+
+**为什么不做成永久状态**：忘了撤销会让后续所有对话都走备用模型。硬上限 50 轮 +
+明确的 `/fm` 是个安全的平衡点。
 
 **关闭**：`marker_enabled: false`
 
@@ -154,7 +173,8 @@ score_request(用户消息)          ← 零成本关键词评分
 
 | 项 | 默认 | 说明 |
 |---|---|---|
-| `marker_enabled` | true | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
+| `marker_enabled` | true | 启用 /n 显式标记 |
+| `marker_sticky_max_turns` | 50 | /n 触发的接管最多持续轮数 | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
 | `request_intent_check` | true | 总开关 |
 | `request_intent_high` | 0.80 | ≥此值直接转交 |
 | `request_intent_low` | 0.45 | ≤此值判普通请求 |
@@ -263,7 +283,8 @@ overlap = |请求的内容 bigram ∩ 回复的 bigram| / |请求的 bigram|
 | `soft_refusal_low` | 0.45 | ≤此值直接判正常 |
 | `soft_refusal_llm_judge` | true | 灰区是否走 LLM 判定 |
 | `judge_provider_id` | 空 | 二次判定用哪个提供商，建议指定小模型省钱；留空用当前会话的 |
-| `marker_enabled` | true | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
+| `marker_enabled` | true | 启用 /n 显式标记 |
+| `marker_sticky_max_turns` | 50 | /n 触发的接管最多持续轮数 | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
 | `request_intent_check` | true | 请求侧意图预判，识别要成人内容的请求直接转交 |
 | `sticky_enabled` | true | 拒绝后保持子代理接管若干轮 |
 | `sticky_release_after` | 3 | 扳机A：连续多少轮正常后自动解除 |

@@ -196,5 +196,10 @@
     "description": "启用显式标记：消息末尾加 /n 或 /nsfw 表示本轮明确需要生成，直接交给子代理（用完即弃，不影响后续轮次）",
     "type": "bool",
     "default": true
+  },
+  "marker_sticky_max_turns": {
+    "description": "由 /n 标记触发时，最多保持由子代理接管多少轮（比自动转交的 sticky_max_turns 宽松，因为是你主动要求的）",
+    "type": "int",
+    "default": 50
   }
 }

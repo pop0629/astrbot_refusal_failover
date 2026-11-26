@@ -279,12 +279,24 @@ class RefusalFailoverPlugin(Star):
         if self.cfg.get("sticky_enabled", False):
             from .sticky import on_enter
 
+            # An explicit /n means the USER asked for ALT. Do not release it on
+            # "N clean turns" - the sub-agent answering well is the expected
+            # outcome, not a signal to go back. Only a manual /fm or the hard
+            # turn cap releases this kind of sticky.
+            by_marker = verdict.matched_by == "request-intent" and "显式标记" in (
+                verdict.reason or ""
+            )
             st = on_enter(
-                alt_id, int(self.cfg.get("sticky_judge_every", 0))
+                alt_id,
+                int(self.cfg.get("sticky_judge_every", 0)),
+                sticky_release=False if by_marker else True,
             )
             await self._save_sticky(umo, st)
             if self.cfg.get("debug"):
-                logger.info(f"[{PLUGIN_NAME}] sticky mode entered (alt={alt_id})")
+                logger.info(
+                    f"[{PLUGIN_NAME}] sticky entered (alt={alt_id}, "
+                    f"by_marker={by_marker})"
+                )
 
         await self._maybe_refresh_memory(event, umo, card, alt_text, current)
 
@@ -364,9 +376,14 @@ class RefusalFailoverPlugin(Star):
         if info["score"] >= float(self.cfg.get("soft_refusal_low", 0.45)):
             on_turn_had_signal(sticky)
 
+        # /n-started sticky gets the longer cap: the user asked for this
+        if sticky.release_enabled:
+            max_turns = int(self.cfg.get("sticky_max_turns", 10))
+        else:
+            max_turns = int(self.cfg.get("marker_sticky_max_turns", 50))
         decision = evaluate_turn(
             sticky,
-            max_turns=int(self.cfg.get("sticky_max_turns", 10)),
+            max_turns=max_turns,
             release_after_clean=int(self.cfg.get("sticky_release_after", 3)),
             judge_every=int(self.cfg.get("sticky_judge_every", 0)),
         )
