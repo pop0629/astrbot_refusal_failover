@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-1.2.0-blue)
+![version](https://img.shields.io/badge/version-1.3.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -78,6 +78,69 @@ astrbot_refusal_failover/
 | `history_turns` | 8 | 转交携带的最近轮数，长剧情可加 |
 | `memory_update_every_n` | 6 | 记忆卡刷新间隔 |
 | `notify_user` | false | 是否输出「由备用通道继续」提示 |
+
+## 主动消息（子代理主动找你）
+
+子代理在满足条件时**主动发一条消息**过来，不用你开口。
+
+### 双条件 + 冷却 + 概率
+
+```
+条件 1  定时器到点（proactive_interval_minutes，默认 30 分钟）
+条件 2  最近 proactive_intimacy_window_minutes 内出现过亲昵信号
+   ↓ 都满足
+冷却检查  距上次主动消息不足 proactive_cooldown_minutes 则跳过
+   ↓ 通过
+概率掷骰  proactive_probability（默认 0.3）
+   ↓ 命中
+子代理生成并发送 + 自动进入 NSFW 接管模式
+```
+
+亲昵信号覆盖这些（不含露骨词，只看日常亲密）：
+
+```
+抱/搂/靠/摸头/亲/吻/牵手/枕在你肩上/撒娇/贴贴
+宝宝/宝贝/老公/老婆  喜欢你/想你   hug/cuddle/kiss
+```
+
+### 配置
+
+| 项 | 默认 | 说明 |
+|---|---|---|
+| `proactive_enabled` | **false** | 总开关，默认关闭 |
+| `proactive_interval_minutes` | 30 | 定时器间隔 |
+| `proactive_intimacy_window_minutes` | 20 | 亲昵有效期 |
+| `proactive_cooldown_minutes` | 90 | 两次之间的最短间隔 |
+| `proactive_probability` | 0.3 | 命中概率 |
+| `proactive_persona_hint` | 空 | 人设提示，越具体越自然 |
+| `proactive_switch_to_nsfw` | true | 触发时同时进入 `/n` 接管模式 |
+
+### 主动消息的专用提示词
+
+生成时会注入以下约束，避免机械感：
+
+- 一两句就够，像真的在想对方时随手发的
+- 不许打招呼（「在吗」「你好」），不复述刚才聊过什么
+- 不许「作为 AI」「我来找你」这类元叙述
+- 延续最近对话的情绪和距离感，不变生分
+- 亲近程度与已有关系相称
+
+再叠加：人设 + 风格要求 + 主模型真实文风样本 + 记忆卡 + 最近对话。
+
+### ⚠️ 平台限制
+
+主动消息走 `context.send_message()`，**部分平台不支持**：
+
+| 平台 | 支持 |
+|---|---|
+| 个人 QQ / Telegram / Discord | 通常可以 |
+| QQ 官方 API | **限制严格**，可能失败 |
+
+发送失败时日志会明确提示：
+
+```
+proactive delivery failed for <umo>. QQ 官方 API 等平台可能不支持主动消息
+```
 
 ## 自动判定总开关
 

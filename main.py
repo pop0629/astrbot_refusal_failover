@@ -14,6 +14,7 @@ Design notes (see also failover.py):
 
 from __future__ import annotations
 
+import asyncio
 import json
 import time
 
@@ -61,6 +62,7 @@ class RefusalFailoverPlugin(Star):
     async def initialize(self):
         if self.cfg.get("debug"):
             logger.info(f"[{PLUGIN_NAME}] loaded, alt_provider_id={self.cfg.get('alt_provider_id')}")
+        self._proactive_task = asyncio.create_task(self._proactive_loop())
 
     # ---------------- KV helpers (memory card) ----------------
 
@@ -721,6 +723,10 @@ class RefusalFailoverPlugin(Star):
         if not text.strip():
             return
 
+        # proactive bookkeeping (session registry + intimacy timestamp)
+        await self._register_session(umo)
+        await self._remember_intimacy(event)
+
         extra = self.cfg.get("request_sensitive_patterns", []) or []
 
         # ---- 1. explicit marker (always honoured, even if scoring is off) ----
@@ -1210,5 +1216,261 @@ class RefusalFailoverPlugin(Star):
             f"当前：主模型「{cur or '未知'}」\n发送 /fa 可临时切到备用"
         )
 
+    # ---------------- proactive messages ----------------
+
+    def _proactive_key(self, umo: str) -> str:
+        return f"proactive:{umo}"
+
+    async def _get_proactive_state(self, umo: str):
+        from .proactive import ProactiveState
+
+        raw = await self.get_kv_data(self._proactive_key(umo), "")
+        if not raw:
+            return ProactiveState()
+        try:
+            return ProactiveState.from_json(json.loads(raw))
+        except Exception:
+            return ProactiveState()
+
+    async def _save_proactive_state(self, umo: str, state) -> None:
+        await self.put_kv_data(
+            self._proactive_key(umo), json.dumps(state.to_json(), ensure_ascii=False)
+        )
+
+    async def _remember_intimacy(self, event) -> None:
+        """Called on every inbound message; records when intimacy was last seen."""
+        if not self.cfg.get("proactive_enabled", False):
+            return
+        from .proactive import is_intimate
+
+        text = event.message_str or ""
+        if not is_intimate(text):
+            return
+        umo = event.unified_msg_origin
+        st = await self._get_proactive_state(umo)
+        st.last_intimacy = time.time()
+        await self._save_proactive_state(umo, st)
+        if self.cfg.get("debug"):
+            logger.info(f"[{PLUGIN_NAME}] intimacy signal recorded for {umo}")
+
+    async def _maybe_fire_proactive(self, umo: str) -> None:
+        """One timer tick: decide and, if the roll passes, send a message."""
+        from .proactive import build_proactive_prompt, evaluate
+
+        if not self.cfg.get("proactive_enabled", False):
+            return
+        alt_id = str(self.cfg.get("alt_provider_id", "")).strip()
+        alt = self._resolve_provider(alt_id) if alt_id else None
+        if alt is None:
+            return
+
+        st = await self._get_proactive_state(umo)
+        decision = evaluate(
+            st,
+            interval_minutes=float(self.cfg.get("proactive_interval_minutes", 30)),
+            intimacy_window_minutes=float(self.cfg.get("proactive_intimacy_window_minutes", 20)),
+            cooldown_minutes=float(self.cfg.get("proactive_cooldown_minutes", 90)),
+            probability=float(self.cfg.get("proactive_probability", 0.3)),
+        )
+        if not decision.fire:
+            if self.cfg.get("debug"):
+                logger.info(f"[{PLUGIN_NAME}] proactive skipped: {decision.reason}")
+            return
+
+        # build context from history
+        recent_pairs: list[tuple[str, str]] = []
+        try:
+            cm = self.context.conversation_manager
+            cid = await cm.get_curr_conversation_id(umo)
+            if cid:
+                conv = await cm.get_conversation(umo, cid)
+                if conv and conv.content:
+                    for m in conv.content[-8:]:
+                        role = m.get("role", "")
+                        txt = m.get("content", "")
+                        if isinstance(txt, list):
+                            txt = " ".join(
+                                p.get("text", "") for p in txt
+                                if isinstance(p, dict) and p.get("text")
+                            )
+                        if role in ("user", "assistant") and txt:
+                            recent_pairs.append((role, str(txt)))
+        except Exception:
+            pass
+
+        card = await self._load_card(umo)
+        style = str(self.cfg.get("style_brief", ""))
+        style_sample = await self._style_sample_for_session(umo)
+        memory = (
+            card.render(int(self.cfg.get("memory_max_chars", 1800)))
+            if self.cfg.get("enable_memory_card", True)
+            else ""
+        )
+        recent = "\n".join(
+            f"{'对方' if r == 'user' else '你'}: {t}" for r, t in recent_pairs[-4:]
+        )
+        prompt = build_proactive_prompt(
+            persona_hint=str(self.cfg.get("proactive_persona_hint", "")),
+            style_brief=style,
+            style_sample=style_sample,
+            memory=memory,
+            recent_turns=recent,
+        )
+
+        model = str(self.cfg.get("alt_model", "")).strip() or None
+        async def _call():
+            r = await alt.text_chat(
+                prompt=prompt,
+                session_id=f"{umo}:proactive",
+                contexts=None,
+                system_prompt="你正在写一条主动发出的消息。只输出那句话本身。",
+                model=model,
+            )
+            return (r.completion_text or "").strip()
+
+        text = await self._call_with_retry(_call)
+        if not text:
+            logger.warning(f"[{PLUGIN_NAME}] proactive generation returned empty")
+            return
+
+        ok = await self._deliver_proactive(umo, text)
+        if ok:
+            st.last_fire = time.time()
+            await self._save_proactive_state(umo, st)
+
+            # switch this session into NSFW takeover, same as an explicit /n
+            if self.cfg.get("proactive_switch_to_nsfw", True):
+                from .sticky import on_enter
+
+                existing = await self._get_sticky(umo)
+                if not existing.active:
+                    await self._save_sticky(
+                        umo,
+                        on_enter(alt_id,
+                                 int(self.cfg.get("sticky_judge_every", 0)),
+                                 sticky_release=False),
+                    )
+                    if self.cfg.get("debug"):
+                        logger.info(f"[{PLUGIN_NAME}] proactive entered NSFW takeover")
+            if self.cfg.get("debug"):
+                logger.info(f"[{PLUGIN_NAME}] proactive sent to {umo}: {text[:40]}")
+        else:
+            logger.warning(
+                f"[{PLUGIN_NAME}] proactive delivery failed for {umo}. "
+                f"QQ 官方 API 等平台可能不支持主动消息"
+            )
+
+    async def _call_with_retry(self, fn):
+        for _ in range(2):
+            try:
+                v = await fn()
+                if v:
+                    return v
+            except Exception as e:
+                if self.cfg.get("debug"):
+                    logger.warning(f"[{PLUGIN_NAME}] proactive call failed: {e}")
+        return ""
+
+    async def _deliver_proactive(self, umo: str, text: str) -> bool:
+        """Send without an inbound event. Platform support varies."""
+        try:
+            from astrbot.core.message.message_event_result import MessageChain
+
+            chain = MessageChain().message(text)
+            return bool(await self.context.send_message(umo, chain))
+        except ImportError:
+            pass
+        except Exception as e:
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] send_message failed: {e}")
+        # fallback: some versions expose a different builder
+        try:
+            from astrbot.api.message_components import Plain
+            from astrbot.core.message.message_event_result import MessageChain
+
+            chain = MessageChain(chain=[Plain(text=text)])
+            return bool(await self.context.send_message(umo, chain))
+        except Exception as e:
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] proactive fallback failed: {e}")
+            return False
+
+    async def _proactive_loop(self) -> None:
+        """Background timer. Ticks once per `proactive_interval_minutes`."""
+        while True:
+            try:
+                interval = float(self.cfg.get("proactive_interval_minutes", 30))
+                await asyncio.sleep(max(60.0, interval * 60.0))
+                if not self.cfg.get("proactive_enabled", False):
+                    continue
+                for umo in list(await self._known_sessions()):
+                    try:
+                        await self._maybe_fire_proactive(umo)
+                    except Exception as e:
+                        if self.cfg.get("debug"):
+                            logger.warning(f"[{PLUGIN_NAME}] proactive tick failed for {umo}: {e}")
+            except asyncio.CancelledError:
+                raise
+            except Exception as e:
+                if self.cfg.get("debug"):
+                    logger.warning(f"[{PLUGIN_NAME}] proactive loop error: {e}")
+
+    async def _style_sample_for_session(self, umo: str) -> str:
+        """Style fingerprint without an inbound event (proactive path)."""
+        pairs = await self._history_for_umo(umo)
+        replies = [t for r, t in pairs if r == "assistant"]
+        if replies:
+            replies = replies[:-1]  # drop a possibly-ALT last reply
+        return build_style_sample(replies, int(self.cfg.get("style_sample_max_chars", 700)))
+
+    async def _history_for_umo(self, umo: str) -> list[tuple[str, str]]:
+        try:
+            cm = self.context.conversation_manager
+            cid = await cm.get_curr_conversation_id(umo)
+            if not cid:
+                return []
+            conv = await cm.get_conversation(umo, cid)
+            if not conv or not conv.content:
+                return []
+            out = []
+            for m in conv.content:
+                role = m.get("role", "")
+                txt = m.get("content", "")
+                if isinstance(txt, list):
+                    txt = " ".join(
+                        p.get("text", "") for p in txt
+                        if isinstance(p, dict) and p.get("text")
+                    )
+                if role in ("user", "assistant") and txt:
+                    out.append((role, str(txt)))
+            return out
+        except Exception:
+            return []
+
+    async def _known_sessions(self) -> set[str]:
+        """Sessions we have seen before, recovered from KV prefixes."""
+        try:
+            raw = await self.get_kv_data("proactive_sessions", "[]")
+            return set(json.loads(raw))
+        except Exception:
+            return set()
+
+    async def _register_session(self, umo: str) -> None:
+        try:
+            known = await self._known_sessions()
+            if umo in known:
+                return
+            known.add(umo)
+            await self.put_kv_data("proactive_sessions", json.dumps(sorted(known), ensure_ascii=False))
+        except Exception:
+            pass
+
     async def terminate(self):
-        pass
+        task = getattr(self, "_proactive_task", None)
+        if task is not None:
+            task.cancel()
+            try:
+                await task
+            except Exception:
+                pass
+        self._proactive_task = None

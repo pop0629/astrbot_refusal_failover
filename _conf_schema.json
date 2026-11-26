@@ -216,5 +216,40 @@
     "description": "请求阶段直接抢占：判定要走子代理时，跳过主模型调用并由子代理直接作答。开启后主模型完全不参与（省一半 token、延迟减半、其他插件看不到拒绝文本）",
     "type": "bool",
     "default": true
+  },
+  "proactive_enabled": {
+    "description": "主动消息总开关。开启后子代理会在「定时到点 + 最近有亲昵」双条件满足时主动发消息",
+    "type": "bool",
+    "default": false
+  },
+  "proactive_interval_minutes": {
+    "description": "定时器间隔（分钟）。每隔这么久检查一次是否要主动发消息",
+    "type": "int",
+    "default": 30
+  },
+  "proactive_intimacy_window_minutes": {
+    "description": "亲昵有效期（分钟）。最近这么多分钟内出现过亲昵信号才算满足条件",
+    "type": "int",
+    "default": 20
+  },
+  "proactive_cooldown_minutes": {
+    "description": "冷却时间（分钟）。两次主动消息之间至少间隔这么久",
+    "type": "int",
+    "default": 90
+  },
+  "proactive_probability": {
+    "description": "命中概率（0~1）。双条件满足后仍按此概率掷骰，避免机械感。0.3 表示三成机会",
+    "type": "float",
+    "default": 0.3
+  },
+  "proactive_persona_hint": {
+    "description": "主动消息的人设提示（可留空）。写给生成主动消息时的角色设定，越具体越自然",
+    "type": "text",
+    "default": ""
+  },
+  "proactive_switch_to_nsfw": {
+    "description": "触发主动消息时是否同时切换到 NSFW 接管模式（等同自动 /n）",
+    "type": "bool",
+    "default": true
   }
 }
