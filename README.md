@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-1.0.1-blue)
+![version](https://img.shields.io/badge/version-1.0.2-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 

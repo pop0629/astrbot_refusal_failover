@@ -3,6 +3,24 @@
 本项目的所有重要变更都记录在此。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.0.2] - 2026-11-27
+
+### 修复
+- **钩子优先级设为 100，确保先于记忆类插件改写回复**
+
+  用户装了多个记忆/陪伴类插件（memory_companion、memory_beyond、
+  memory_diary、fish_heart），它们同样注册 `on_llm_response` 并存档回复。
+
+  AstrBot 的 `StarHandlerRegistry` 排序规则是
+  `sort(key=lambda h: -h.extras_configs["priority"])`，默认全为 0，
+  于是按插件加载顺序执行。若记忆插件排在前面，它们存档的永远是
+  主模型的拒绝原文，之后插件再改写 `completion_text` 也追不回来。
+
+  修复：两个钩子均设 `priority=100`。
+  `on_llm_request` 同步提高，保证连续性注入先于其他插件处理 system_prompt。
+
+  注：priority 是装饰器字面量，需在 import 期确定，因此不做成配置项。
+
 ## [1.0.1] - 2026-11-27
 
 ### 修复

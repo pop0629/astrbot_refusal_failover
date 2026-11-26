@@ -134,7 +134,11 @@ class RefusalFailoverPlugin(Star):
 
     # ---------------- main hook ----------------
 
-    @filter.on_llm_response()
+    # priority=100 runs before default(0) handlers. This matters: memory/companion
+    # plugins also hook on_llm_response and would otherwise archive the main
+    # model's refusal before we swap it out. Must be a literal - the decorator
+    # is evaluated at import time, before config is available.
+    @filter.on_llm_response(priority=100)
     async def on_llm_response(self, event: AstrMessageEvent, response: LLMResponse):
         if not self.cfg.get("enabled", True):
             return
@@ -793,7 +797,7 @@ class RefusalFailoverPlugin(Star):
 
     # ---------------- manual-switch continuity injection ----------------
 
-    @filter.on_llm_request()
+    @filter.on_llm_request(priority=100)
     async def inject_continuity(self, event: AstrMessageEvent, req):
         """While the session is on the ALt provider (manual switch), give it the
         same continuity scaffolding the automatic failover uses:
