@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-1.1.4-blue)
+![version](https://img.shields.io/badge/version-1.2.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -79,6 +79,28 @@ astrbot_refusal_failover/
 | `memory_update_every_n` | 6 | 记忆卡刷新间隔 |
 | `notify_user` | false | 是否输出「由备用通道继续」提示 |
 
+## 自动判定总开关
+
+`auto_detect_enabled`（默认开）控制**所有自动判定**。
+
+关闭后，插件退化成纯粹的手动工具：
+
+| 能力 | 关闭后 |
+|---|---|
+| `/n` 指令 | ✅ 仍生效 |
+| `/fm` 切回 | ✅ 仍生效 |
+| 请求意图预判 | ❌ 不执行 |
+| 软拒绝评分 | ❌ 不执行 |
+| LLM 二次判定 | ❌ 不执行 |
+| 结构化标记 `{"status":"refused"}` | ✅ 仍生效（Tier 0，属于协议层不算自动判定） |
+
+用它的场景：你只想要精确控制，不想让插件猜测你的意图。代价是主模型拒绝时
+不会自动救场，必须手动加 `/n`。
+
+```
+auto_detect_enabled: false
+```
+
 ## 显式标记 `/n`（最可靠的一层）
 
 猜意图永远有误差。用户直接说清楚最准：
@@ -111,7 +133,7 @@ astrbot_refusal_failover/
 | 方式 | 说明 |
 |---|---|
 | `/fm` | 立即切回主模型 |
-| 硬上限 | 超过 `marker_sticky_max_turns`（默认 50）强制解除 |
+| 硬上限 | 超过 `marker_sticky_max_turns`（默认 100）强制解除 |
 | 子代理失效 | provider 不可用时自动释放，不会卡住 |
 
 **与自动转交的关键差异**：
@@ -175,7 +197,7 @@ score_request(用户消息)          ← 零成本关键词评分
 |---|---|---|
 | `sync_history` | true | 转交后修正会话历史（重要） |
 | `marker_enabled` | true | 启用 /n 显式标记 |
-| `marker_sticky_max_turns` | 50 | /n 触发的接管最多持续轮数 | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
+| `marker_sticky_max_turns` | 100 | /n 触发的接管最多持续轮数 | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
 | `request_intent_check` | true | 总开关 |
 | `request_intent_high` | 0.80 | ≥此值直接转交 |
 | `request_intent_low` | 0.45 | ≤此值判普通请求 |
@@ -286,7 +308,7 @@ overlap = |请求的内容 bigram ∩ 回复的 bigram| / |请求的 bigram|
 | `judge_provider_id` | 空 | 二次判定用哪个提供商，建议指定小模型省钱；留空用当前会话的 |
 | `sync_history` | true | 转交后修正会话历史（重要） |
 | `marker_enabled` | true | 启用 /n 显式标记 |
-| `marker_sticky_max_turns` | 50 | /n 触发的接管最多持续轮数 | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
+| `marker_sticky_max_turns` | 100 | /n 触发的接管最多持续轮数 | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
 | `request_intent_check` | true | 请求侧意图预判，识别要成人内容的请求直接转交 |
 | `sticky_enabled` | true | 拒绝后保持子代理接管若干轮 |
 | `sticky_release_after` | 3 | 扳机A：连续多少轮正常后自动解除 |

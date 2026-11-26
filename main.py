@@ -391,7 +391,7 @@ class RefusalFailoverPlugin(Star):
         if sticky.release_enabled:
             max_turns = int(self.cfg.get("sticky_max_turns", 10))
         else:
-            max_turns = int(self.cfg.get("marker_sticky_max_turns", 50))
+            max_turns = int(self.cfg.get("marker_sticky_max_turns", 100))
         decision = evaluate_turn(
             sticky,
             max_turns=max_turns,
@@ -552,6 +552,11 @@ class RefusalFailoverPlugin(Star):
         )
         if marker_verdict.refused:
             return marker_verdict
+
+        # master switch off -> stop here. No cue scoring, no LLM judgement;
+        # only an explicit /n marker can trigger a failover.
+        if not self.cfg.get("auto_detect_enabled", True):
+            return RefusalVerdict(False, "", "auto-detect-off")
 
         mode = str(self.cfg.get("refusal_mode", "marker_or_regex"))
 
@@ -739,6 +744,9 @@ class RefusalFailoverPlugin(Star):
                     logger.info(f"[{PLUGIN_NAME}] explicit marker -> force failover")
                 return
 
+        # master switch: when off, only the /n marker drives failover
+        if not self.cfg.get("auto_detect_enabled", True):
+            return
         if not self.cfg.get("request_intent_check", True):
             return
 
@@ -873,7 +881,7 @@ class RefusalFailoverPlugin(Star):
             cap = (
                 int(self.cfg.get("sticky_max_turns", 10))
                 if sticky.release_enabled
-                else int(self.cfg.get("marker_sticky_max_turns", 50))
+                else int(self.cfg.get("marker_sticky_max_turns", 100))
             )
             decision = evaluate_turn(
                 sticky,

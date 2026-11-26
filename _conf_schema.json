@@ -4,6 +4,11 @@
     "type": "bool",
     "default": true
   },
+  "auto_detect_enabled": {
+    "description": "自动判定总开关。开启=按请求意图/软拒绝评分/LLM 判定自动转交；关闭=只有 /n 指令能开启接管、/fm 切回，不做任何自动判断",
+    "type": "bool",
+    "default": true
+  },
   "main_provider_id": {
     "description": "主模型提供商（留空 = 使用当前会话正在用的提供商；刷新记忆卡时也用它）",
     "type": "string",
@@ -198,9 +203,9 @@
     "default": true
   },
   "marker_sticky_max_turns": {
-    "description": "由 /n 标记触发时，最多保持由子代理接管多少轮（比自动转交的 sticky_max_turns 宽松，因为是你主动要求的）",
+    "description": "/n 标记触发后，最多保持由子代理接管多少轮（默认 100）",
     "type": "int",
-    "default": 50
+    "default": 100
   },
   "sync_history": {
     "description": "转交后同步修正会话历史（重要）。AstrBot 在触发 on_llm_response 之前就把主模型的原始回复写入历史了，不同步会导致：后台看到主模型回复、其他插件读到拒绝内容、下一轮模型记错",
