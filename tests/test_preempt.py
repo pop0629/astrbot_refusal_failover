@@ -87,6 +87,8 @@ class CM:
     async def update_conversation(self, unified_msg_origin=None, conversation_id=None,
                                   history=None, **kw):
         self.saved = [dict(m) for m in (history or [])]
+        if not hasattr(self, "history_seq"): self.history_seq = []
+        self.history_seq.append([dict(m) for m in (history or [])])
 class Ctx:
     def __init__(self,provs,pairs):
         self._p=provs; self.conversation_manager=CM(pairs)
@@ -210,6 +212,27 @@ async def main():
         check("历史最后一条是子代理内容", cm.saved[-1]["content"] == GOOD,
               repr(cm.saved[-1]["content"])[:30])
         check("历史含 assistant 角色", cm.saved[-1]["role"] == "assistant")
+
+
+    # 8) 关键时序：派发 on_llm_response 时，历史里必须已有本轮 user 消息
+    #    否则其他插件只能看到上一轮的 assistant，出现"只有 bot 消息"。
+    import astrbot.core.pipeline.context_utils as _cu2
+    seen = {}
+    async def _probe(event, hook_type, *a, **k):
+        cm = pl4.context.conversation_manager
+        seen["history_at_dispatch"] = [dict(m) for m in (cm.saved or [])]
+        return False
+    _cu2.call_event_hook = _probe
+    pl4, alt4 = make({"sticky_enabled": True})
+    e4 = Evt("宝宝 我想要你 /n")
+    await pl4.inject_continuity(e4, Req())
+    hist = seen.get("history_at_dispatch") or []
+    check("派发时历史非空", len(hist) > 0, f"len={len(hist)}")
+    has_user = any(m.get("role") == "user" and "宝宝" in str(m.get("content", "")) for m in hist)
+    check("派发时已含本轮用户消息", has_user,
+          str([m.get("role") for m in hist]))
+    has_alt = any(m.get("role") == "assistant" and GOOD in str(m.get("content", "")) for m in hist)
+    check("派发时已含本轮助手回复", has_alt)
 
     print(f"\n--- 抢占模式: {ok}/{total} ---")
     return ok==total

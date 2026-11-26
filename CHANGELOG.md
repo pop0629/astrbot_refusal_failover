@@ -3,6 +3,27 @@
 本项目的所有重要变更都记录在此。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.1.3] - 2026-11-27
+
+### 修复
+- **抢占后其他插件只看到 bot 消息，读不到用户消息**
+
+  上一版补了合成派发（让其他插件能收到回复），但调用顺序写反了：
+
+  ```python
+  await self._dispatch_synthetic_response(...)    # 先派发
+  await self._persist_preempted_turn(...)         # 后写历史
+  ```
+
+  其他插件在 `on_llm_response` 里读会话历史时，本轮的用户消息和助手回复
+  都还没写进去，看到的是上一轮末尾的状态 —— 表现为「只有 bot 消息」。
+
+  修复：先持久化，再派发。
+
+### 测试
+- 新增时序断言：在钩子被调用的那一刻检查历史，必须已包含本轮
+  user 与 assistant 两条。`test_preempt` 增至 22 项
+
 ## [1.1.2] - 2026-11-27
 
 ### 修复

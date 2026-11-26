@@ -890,11 +890,16 @@ class RefusalFailoverPlugin(Star):
 
         # ---- notify the rest of the plugin ecosystem ----
         # Stopping the request means the agent runner never runs, so
+        # ---- persist BEFORE dispatching ----
+        # Other plugins read the conversation inside on_llm_response. If we
+        # dispatch first they see the previous turn (assistant only, no user
+        # message), which is exactly the "user message missing" symptom.
+        await self._persist_preempted_turn(event, umo, current, alt_text)
+
         # on_llm_response would never fire. Memory/companion plugins listen to
         # that hook, so without this they see nothing at all for the turn.
         # We dispatch it ourselves with the ALT content.
         await self._dispatch_synthetic_response(event, alt_text)
-        await self._persist_preempted_turn(event, umo, current, alt_text)
 
         # ---- deliver straight to the user ----
         try:
