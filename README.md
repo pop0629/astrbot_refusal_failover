@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-1.3.2-blue)
+![version](https://img.shields.io/badge/version-1.3.3-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -86,6 +86,7 @@ astrbot_refusal_failover/
 ### 双条件 + 冷却 + 概率
 
 ```
+条件 0  当前小时在活跃时段内（proactive_active_start ~ _end）
 条件 1  定时器到点（proactive_interval_minutes，默认 30 分钟）
 条件 2  最近 proactive_intimacy_window_minutes 内出现过亲昵信号
    ↓ 都满足
@@ -103,6 +104,33 @@ astrbot_refusal_failover/
 宝宝/宝贝/老公/老婆  喜欢你/想你   hug/cuddle/kiss
 ```
 
+
+### 活跃时段
+
+只在指定时段内主动发消息，避免半夜打扰：
+
+```json
+"proactive_active_start": "9:00",
+"proactive_active_end":   "23:00"
+```
+
+**支持跨午夜**（夜猫子模式）：
+
+```json
+"proactive_active_start": "22:00",
+"proactive_active_end":   "2:00"
+```
+
+表示 22:00、23:00、00:00、01:00 这几个小时内可触发。
+
+**开始时间 = 结束时间 表示全天不限**（默认 `0:00 / 0:00`）。
+
+不在时段内时日志会说清楚：
+
+```
+proactive skipped: 不在活跃时段（09:00 - 23:00）
+```
+
 ### 配置
 
 | 项 | 默认 | 说明 |
@@ -110,6 +138,8 @@ astrbot_refusal_failover/
 | `proactive_enabled` | **false** | 总开关，默认关闭 |
 | `proactive_interval_minutes` | 30 | 定时器间隔 |
 | `proactive_intimacy_window_minutes` | 20 | 亲昵有效期 |
+| `proactive_active_start` | `0:00` | 活跃时段开始（小时或 HH:MM） |
+| `proactive_active_end` | `0:00` | 活跃时段结束，可跨午夜；与开始相同表示全天 |
 | `proactive_cooldown_minutes` | 90 | 两次之间的最短间隔 |
 | `proactive_probability` | 0.3 | 命中概率 |
 | `proactive_persona_hint` | 空 | 人设提示，越具体越自然 |

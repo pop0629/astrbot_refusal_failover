@@ -1268,7 +1268,7 @@ class RefusalFailoverPlugin(Star):
 
     async def _maybe_fire_proactive(self, umo: str) -> None:
         """One timer tick: decide and, if the roll passes, send a message."""
-        from .proactive import build_proactive_prompt, evaluate
+        from .proactive import build_proactive_prompt, evaluate, parse_hour
 
         if not self.cfg.get("proactive_enabled", False):
             return
@@ -1284,6 +1284,8 @@ class RefusalFailoverPlugin(Star):
             intimacy_window_minutes=float(self.cfg.get("proactive_intimacy_window_minutes", 20)),
             cooldown_minutes=float(self.cfg.get("proactive_cooldown_minutes", 90)),
             probability=float(self.cfg.get("proactive_probability", 0.3)),
+            active_start=parse_hour(self.cfg.get("proactive_active_start", "0:00"), 0),
+            active_end=parse_hour(self.cfg.get("proactive_active_end", "0:00"), 0),
         )
         if not decision.fire:
             if self.cfg.get("debug"):

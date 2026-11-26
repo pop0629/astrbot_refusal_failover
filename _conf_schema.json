@@ -232,6 +232,16 @@
     "type": "int",
     "default": 20
   },
+  "proactive_active_start": {
+    "description": "活跃时段开始（小时，0-23 或 HH:MM）。只在此时段内才会主动发消息",
+    "type": "string",
+    "default": "0:00"
+  },
+  "proactive_active_end": {
+    "description": "活跃时段结束（小时，0-23 或 HH:MM）。可与开始时间跨午夜，如 22:00 到 2:00。开始=结束 表示全天",
+    "type": "string",
+    "default": "0:00"
+  },
   "proactive_cooldown_minutes": {
     "description": "冷却时间（分钟）。两次主动消息之间至少间隔这么久",
     "type": "int",

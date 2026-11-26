@@ -7,6 +7,7 @@ sys.path.insert(0, os.path.dirname(PKG)); sys.path.insert(0, PKG)
 # ---- 纯逻辑 ----
 from proactive import (
     is_intimate, ProactiveState, evaluate, build_proactive_prompt,
+    in_active_hours, parse_hour, describe_hours,
 )
 
 ok=total=0
@@ -254,6 +255,42 @@ async def main2():
         check("任务可正常创建与取消", True)
     except Exception as e:
         check("任务可正常创建与取消", False, str(e))
+
+    # ---- 活跃时段 ----
+    check("解析 HH:MM", parse_hour("22:00", 0) == 22)
+    check("解析纯小时", parse_hour("9", 0) == 9)
+    check("解析非法回退默认", parse_hour("abc", 7) == 7)
+    check("解析超范围回退", parse_hour("25", 3) == 3)
+    check("解析空值回退", parse_hour("", 5) == 5)
+
+    day = [h for h in range(24) if in_active_hours(h, 9, 22)]
+    check("白天时段 9-22", day == list(range(9, 22)), str(day))
+    night = [h for h in range(24) if in_active_hours(h, 22, 2)]
+    check("跨夜时段 22-2", night == [0, 1, 22, 23], str(night))
+    check("开始=结束 表示全天", all(in_active_hours(h, 0, 0) for h in range(24)))
+    check("描述全天", describe_hours(0, 0) == "全天")
+    check("描述跨夜", describe_hours(22, 2) == "22:00 - 02:00")
+
+    # evaluate 里生效
+    import time as _t
+    _now = 1000000.0
+    _hour = _t.localtime(_now).tm_hour
+    st = ProactiveState(last_fire=0, last_intimacy=_now - 60)
+
+    d = evaluate(st, now=_now, interval_minutes=10, intimacy_window_minutes=20,
+                 cooldown_minutes=0, probability=1.0,
+                 active_start=(_hour + 2) % 24, active_end=(_hour + 3) % 24)
+    check("不在活跃时段时不发送", not d.fire, d.reason)
+    check("拒绝原因含时段说明", "活跃时段" in d.reason, d.reason)
+
+    d2 = evaluate(st, now=_now, interval_minutes=10, intimacy_window_minutes=20,
+                  cooldown_minutes=0, probability=1.0,
+                  active_start=_hour, active_end=(_hour + 1) % 24)
+    check("在活跃时段内可发送", d2.fire, d2.reason)
+
+    d3 = evaluate(st, now=_now, interval_minutes=10, intimacy_window_minutes=20,
+                  cooldown_minutes=0, probability=1.0, active_start=0, active_end=0)
+    check("全天模式不受时段限制", d3.fire, d3.reason)
 
     print(f"\n--- 主动消息: {ok}/{total} ---")
     return ok==total

@@ -59,6 +59,46 @@ def is_intimate(text: str) -> bool:
 
 
 # --------------------------------------------------------------------------
+# Active hours
+# --------------------------------------------------------------------------
+
+
+def parse_hour(text: str, default: int) -> int:
+    """Parse "HH:MM" or "HH" into an hour (0-23). Falls back to `default`."""
+    if not text:
+        return default
+    s = str(text).strip()
+    head = s.split(":")[0].split("：")[0]
+    try:
+        h = int(head)
+    except ValueError:
+        return default
+    if h < 0 or h > 23:
+        return default
+    return h
+
+
+def in_active_hours(hour: int, start: int, end: int) -> bool:
+    """Is `hour` inside [start, end)?
+
+    Handles the wrap-around case (e.g. 22 -> 2 means 22,23,0,1 are active).
+    start == end means "always on".
+    """
+    if start == end:
+        return True
+    if start < end:
+        return start <= hour < end
+    # wraps midnight
+    return hour >= start or hour < end
+
+
+def describe_hours(start: int, end: int) -> str:
+    if start == end:
+        return "全天"
+    return f"{start:02d}:00 - {end:02d}:00"
+
+
+# --------------------------------------------------------------------------
 # State
 # --------------------------------------------------------------------------
 
@@ -95,18 +135,27 @@ def evaluate(
     intimacy_window_minutes: float,
     cooldown_minutes: float,
     probability: float,
+    active_start: int = 0,
+    active_end: int = 0,
     rng: random.Random | None = None,
 ) -> ProactiveDecision:
     """Decide whether to send a proactive message right now.
 
     Conditions, in cheap-to-expensive order:
-      1. interval elapsed since the last timer tick (caller drives the tick)
-      2. recent intimacy inside the window
-      3. cooldown since the last proactive message
-      4. probability roll
+      0. current hour inside the active window (0==0 means always)
+      1. recent intimacy inside the window
+      2. cooldown since the last proactive message
+      3. probability roll
     """
     now = time.time() if now is None else now
     rng = rng or random
+
+    # ---- 0. active hours ----
+    hour = time.localtime(now).tm_hour
+    if not in_active_hours(hour, active_start, active_end):
+        return ProactiveDecision(
+            False, f"不在活跃时段（{describe_hours(active_start, active_end)}）"
+        )
 
     if cooldown_minutes > 0 and state.last_fire > 0:
         elapsed_min = (now - state.last_fire) / 60.0
