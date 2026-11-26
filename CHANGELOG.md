@@ -3,6 +3,28 @@
 本项目的所有重要变更都记录在此。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.1.2] - 2026-11-27
+
+### 修复
+- **抢占后其他插件完全收不到回复**（v1.1.0 引入的回归）
+
+  抢占通过 `event.stop_event()` 中止请求，`builder.py` 随后 `return None`，
+  agent runner 根本不创建 —— 于是 `on_llm_response` / `on_agent_done`
+  一个都不会触发。记忆、陪伴、贴纸等依赖该钩子的插件这一轮什么都拿不到。
+
+  修复：抢占产出内容后，主动补两件事
+
+  1. **合成派发** `call_event_hook(OnLLMResponseEvent, resp)`
+     - 用子代理内容构造 `LLMResponse`
+     - 打 `_failover_synthetic` 标记，自身钩子见到即返回，避免递归
+  2. **补写会话历史**
+     - runner 没跑，assistant 半轮从未入库
+     - 否则下一轮会看到悬空的 user 消息，上下文断裂
+
+### 测试
+- `test_preempt` 增至 19 项：验证合成派发携带正确内容、防重入标记、
+  历史写入且最后一条是子代理内容
+
 ## [1.1.1] - 2026-11-27
 
 ### 修复

@@ -140,6 +140,13 @@ class RefusalFailoverPlugin(Star):
     # is evaluated at import time, before config is available.
     @filter.on_llm_response(priority=100)
     async def on_llm_response(self, event: AstrMessageEvent, response: LLMResponse):
+        # A synthetic dispatch from our own preempt path: the reply is already
+        # final, there is nothing to swap. Returning keeps this from recursing.
+        if getattr(response, "_failover_synthetic", False):
+            return
+        if getattr(event, "_failover_synthetic_active", False):
+            return
+
         if not self.cfg.get("enabled", True):
             return
         if response.is_chunk:  # only act on final aggregate response
@@ -881,6 +888,14 @@ class RefusalFailoverPlugin(Star):
             else:
                 await self._save_sticky(umo, sticky)
 
+        # ---- notify the rest of the plugin ecosystem ----
+        # Stopping the request means the agent runner never runs, so
+        # on_llm_response would never fire. Memory/companion plugins listen to
+        # that hook, so without this they see nothing at all for the turn.
+        # We dispatch it ourselves with the ALT content.
+        await self._dispatch_synthetic_response(event, alt_text)
+        await self._persist_preempted_turn(event, umo, current, alt_text)
+
         # ---- deliver straight to the user ----
         try:
             yield_result = event.plain_result(alt_text)
@@ -903,6 +918,59 @@ class RefusalFailoverPlugin(Star):
         # never produced a reply this turn
         await self._maybe_refresh_memory(event, umo, card, alt_text, current)
         return True
+
+    async def _dispatch_synthetic_response(self, event, alt_text: str) -> None:
+        """Fire OnLLMResponseEvent with the ALT reply.
+
+        Other plugins (memory, companion, stickers) subscribe to this hook and
+        would otherwise miss the turn entirely once we stop the request.
+        """
+        try:
+            from astrbot.core.pipeline.context_utils import call_event_hook
+            from astrbot.core.star.star_handler import EventType
+        except Exception:
+            return
+        try:
+            resp = LLMResponse(role="assistant", completion_text=alt_text)
+            setattr(resp, "_failover_synthetic", True)
+            _dispatched = getattr(event, "_failover_synthetic_active", False)
+            try:
+                event._failover_synthetic_active = True  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            await call_event_hook(event, EventType.OnLLMResponseEvent, resp)
+            try:
+                event._failover_synthetic_active = _dispatched  # type: ignore[attr-defined]
+            except Exception:
+                pass
+            if self.cfg.get("debug"):
+                logger.info(f"[{PLUGIN_NAME}] dispatched synthetic on_llm_response")
+        except Exception as e:
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] synthetic dispatch failed: {e}")
+
+    async def _persist_preempted_turn(self, event, umo: str, user_text: str, alt_text: str) -> None:
+        """The runner never ran, so the assistant half of this turn was never
+        stored. Write it now, otherwise the next turn sees a dangling user
+        message and the model loses this exchange from context."""
+        if not self.cfg.get("sync_history", True):
+            return
+        try:
+            cm = self.context.conversation_manager
+            cid = await cm.get_curr_conversation_id(umo)
+            if not cid:
+                return
+            conv = await cm.get_conversation(umo, cid)
+            history = list(conv.content) if conv and conv.content else []
+            if not history or history[-1].get("role") != "user":
+                history.append({"role": "user", "content": user_text})
+            history.append({"role": "assistant", "content": alt_text})
+            await cm.update_conversation(
+                unified_msg_origin=umo, conversation_id=cid, history=history
+            )
+        except Exception as e:
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] persist preempted turn failed: {e}")
 
     async def _peek_intent_hit(self, umo: str) -> bool:
         raw = await self.get_kv_data(self._intent_key(umo), "")

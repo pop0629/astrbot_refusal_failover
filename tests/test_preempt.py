@@ -39,11 +39,27 @@ class LLMResponse:
     def completion_text(self, v): self._t=v
 class ProviderType: CHAT_COMPLETION="chat_completion"
 ent.LLMResponse=LLMResponse; ent.ProviderType=ProviderType
+core = types.ModuleType("astrbot.core"); core.__path__ = []
+pipeline = types.ModuleType("astrbot.core.pipeline"); pipeline.__path__ = []
+prov = types.ModuleType("astrbot.core.provider"); prov.__path__ = []
+star_mod = types.ModuleType("astrbot.core.star"); star_mod.__path__ = []
+cu = types.ModuleType("astrbot.core.pipeline.context_utils")
+sh_mod = types.ModuleType("astrbot.core.star.star_handler")
+class _ET:
+    OnLLMResponseEvent = "OnLLMResponseEvent"
+    OnLLMRequestEvent = "OnLLMRequestEvent"
+sh_mod.EventType = _ET
+pipeline.context_utils = cu
+
 for n,m in [("astrbot",types.ModuleType("astrbot")),("astrbot.api",api),
             ("astrbot.api.event",ev),("astrbot.api.star",st),
-            ("astrbot.core",types.ModuleType("astrbot.core")),
-            ("astrbot.core.provider",types.ModuleType("astrbot.core.provider")),
+            ("astrbot.core",core),("astrbot.core.pipeline",pipeline),
+            ("astrbot.core.pipeline.context_utils",cu),
+            ("astrbot.core.star",star_mod),
+            ("astrbot.core.star.star_handler",sh_mod),
+            ("astrbot.core.provider",prov),
             ("astrbot.core.provider.entities",ent)]:
+    m.__dict__.setdefault("__path__", [])
     sys.modules[n]=m
 
 from astrbot_refusal_failover.main import RefusalFailoverPlugin
@@ -65,10 +81,12 @@ class P:
 class Conv:
     def __init__(self,p): self.content=[{"role":r,"content":t} for r,t in p]
 class CM:
-    def __init__(self,p): self.p=p
+    def __init__(self,p): self.p=p; self.saved=None
     async def get_curr_conversation_id(self,u): return "cid"
     async def get_conversation(self,u,c): return Conv(self.p)
-    async def update_conversation(self,**kw): pass
+    async def update_conversation(self, unified_msg_origin=None, conversation_id=None,
+                                  history=None, **kw):
+        self.saved = [dict(m) for m in (history or [])]
 class Ctx:
     def __init__(self,provs,pairs):
         self._p=provs; self.conversation_manager=CM(pairs)
@@ -160,6 +178,38 @@ async def main():
     e=Evt("宝宝 我想要你 /n")
     await pl.inject_continuity(e, Req())
     check("子代理失败时不抢占，交回主模型", not e.is_stopped())
+
+
+    # 6) 抢占后其他插件能收到 on_llm_response（合成派发）
+    import astrbot.core.pipeline.context_utils as _cu
+    if not hasattr(_cu, "call_event_hook"):
+        captured = {}
+        async def _fake_call(event, hook_type, *a, **k):
+            captured["resp"] = a[0] if a else None
+            return False
+        _cu.call_event_hook = _fake_call
+        cm_mod = sys.modules.setdefault("astrbot.core.pipeline", types.ModuleType("astrbot.core.pipeline"))
+        setattr(cm_mod, "context_utils", _cu)
+        pl, alt = make({"sticky_enabled": True})
+        e = Evt("宝宝 我想要你 /n")
+        await pl.inject_continuity(e, Req())
+        r = captured.get("resp")
+        check("合成派发 fire 了 on_llm_response", r is not None)
+        check("合成响应带子代理内容", r is not None and r.completion_text == GOOD,
+              repr(getattr(r, "completion_text", None))[:30])
+        check("合成响应带标记防重入", getattr(r, "_failover_synthetic", False) is True)
+
+    # 7) 抢占后历史被写入 assistant 半轮
+    pl, alt = make({"sticky_enabled": True})
+    e = Evt("宝宝 我想要你 /n")
+    await pl.inject_continuity(e, Req())
+    cm = pl.context.conversation_manager
+    check("抢占后会话历史已写入", cm.saved is not None and len(cm.saved) >= 1,
+          f"len={len(cm.saved) if cm.saved else 0}")
+    if cm.saved:
+        check("历史最后一条是子代理内容", cm.saved[-1]["content"] == GOOD,
+              repr(cm.saved[-1]["content"])[:30])
+        check("历史含 assistant 角色", cm.saved[-1]["role"] == "assistant")
 
     print(f"\n--- 抢占模式: {ok}/{total} ---")
     return ok==total
