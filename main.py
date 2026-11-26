@@ -40,6 +40,11 @@ from .soft_refusal import (
     verdict_reason,
 )
 from .style_check import build_style_sample, drift_report, style_drift
+from .request_intent import (
+    build_request_judge_prompt,
+    parse_request_judge,
+    score_request,
+)
 
 PLUGIN_NAME = "astrbot_refusal_failover"
 
@@ -150,6 +155,16 @@ class RefusalFailoverPlugin(Star):
             return
 
         verdict: RefusalVerdict = await self._judge_refusal(event, text)
+
+        # ---- request-side intent wins: the user asked for content the main
+        # model will refuse, no need to wait for a refusal we might miss ----
+        intent = await self._take_intent_hit(umo)
+        if intent and not verdict.refused:
+            verdict = RefusalVerdict(
+                True,
+                "请求意图命中: " + "; ".join(intent.get("hits", [])[:2]),
+                "request-intent",
+            )
 
         if not verdict.refused:
             await self._maybe_refresh_memory(event, umo, card, text, None)
@@ -559,6 +574,85 @@ class RefusalFailoverPlugin(Star):
         await self._save_card(event.unified_msg_origin, MemoryCard.parse(raw))
         yield event.plain_result("记忆卡已更新")
 
+    # ---------------- request-side intent pre-check ----------------
+
+    def _intent_key(self, umo: str) -> str:
+        return f"intent:{umo}"
+
+    async def _precheck_request_intent(self, event) -> None:
+        """Classify the user's request BEFORE the main model answers.
+
+        If it is clearly an adult-content generation request, mark the session
+        so the response hook routes straight to the ALT provider instead of
+        waiting for a refusal we may fail to recognise.
+        """
+        if not self.cfg.get("request_intent_check", True):
+            return
+
+        umo = event.unified_msg_origin
+        text = event.message_str or ""
+        if not text.strip():
+            return
+
+        extra = self.cfg.get("request_sensitive_patterns", []) or []
+        info = score_request(text, extra)
+
+        high = float(self.cfg.get("request_intent_high", 0.80))
+        low = float(self.cfg.get("request_intent_low", 0.45))
+        score = info["score"]
+
+        hit = score >= high
+        if not hit and score > low:
+            # borderline -> optional LLM check
+            if self.cfg.get("request_intent_llm_judge", False):
+                judged = await self._request_judge(umo, text)
+                hit = bool(judged)
+
+        if hit:
+            await self.put_kv_data(
+                self._intent_key(umo),
+                json.dumps(
+                    {"hit": True, "score": round(score, 2),
+                     "hits": info["hits"], "ts": time.time()},
+                    ensure_ascii=False,
+                ),
+            )
+            if self.cfg.get("debug"):
+                logger.info(
+                    f"[{PLUGIN_NAME}] request intent hit (score={score:.2f}) {info['hits'][:3]}"
+                )
+        else:
+            # stale flag from a previous turn must not leak into this one
+            await self.put_kv_data(self._intent_key(umo), "")
+
+    async def _request_judge(self, umo: str, text: str) -> bool | None:
+        pid = str(self.cfg.get("request_intent_judge_provider_id", "")).strip()
+        prov = self._resolve_provider(pid) if pid else self.context.get_using_provider(umo)
+        if prov is None:
+            return None
+        try:
+            r = await prov.text_chat(
+                prompt=build_request_judge_prompt(text),
+                session_id=f"{umo}:reqjudge",
+                contexts=None,
+                system_prompt="你是严格的分类器，只输出 YES 或 NO。",
+            )
+            return parse_request_judge(r.completion_text or "")
+        except Exception:
+            return None
+
+    async def _take_intent_hit(self, umo: str) -> dict:
+        """Read and clear the request-intent flag."""
+        raw = await self.get_kv_data(self._intent_key(umo), "")
+        if not raw:
+            return {}
+        try:
+            data = json.loads(raw)
+        except Exception:
+            return {}
+        await self.put_kv_data(self._intent_key(umo), "")
+        return data if data.get("hit") else {}
+
     # ---------------- manual-switch continuity injection ----------------
 
     @filter.on_llm_request()
@@ -570,6 +664,9 @@ class RefusalFailoverPlugin(Star):
         Without this, a manually switched session silently loses all the
         coherence machinery, which is the main reason switching felt jarring.
         """
+        # ---- request-side intent pre-check (runs regardless of mode) ----
+        await self._precheck_request_intent(event)
+
         if not self.cfg.get("manual_switch_continuity", True):
             return
 

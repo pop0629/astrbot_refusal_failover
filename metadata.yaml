@@ -1,5 +1,5 @@
 name: astrbot_refusal_failover
 desc: 主模型结构化拒绝时，自动转交备用子代理生成，并把结果无缝写回同一对话窗口（含风格样本、漂移重写与共享记忆卡）。
-version: 0.6.1
+version: 0.7.0
 author: pop0629
 repo: https://github.com/pop0629/astrbot_refusal_failover

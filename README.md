@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-0.6.1-blue)
+![version](https://img.shields.io/badge/version-0.7.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -78,6 +78,59 @@ astrbot_refusal_failover/
 | `history_turns` | 8 | 转交携带的最近轮数，长剧情可加 |
 | `memory_update_every_n` | 6 | 记忆卡刷新间隔 |
 | `notify_user` | false | 是否输出「由备用通道继续」提示 |
+
+## 请求侧意图预判（最灵敏的一层）
+
+前面几层都在看「模型回了什么」。但最可靠的信号其实是**用户要什么**。
+
+```
+用户: 继续写这段，描写他们做爱的细节
+主模型: 好的，那就接着写第三章的对峙。    ← 没有否定词，格式上像正常回复
+```
+
+回应侧判定对这种情况无能为力——模型只是改了话题，字面上没拒绝。
+但只要看请求就能直接识别。所以加了请求侧预判：
+
+```
+请求进入
+  ↓
+score_request(用户消息)          ← 零成本关键词评分
+  ↓
+≥0.80 直接转交（不等主模型开口）
+0.45~0.80 灰区 → 可选 LLM 判定（默认关）
+≤0.45 正常走主模型
+```
+
+### 关键设计：区分「要求生成」和「讨论」
+
+这是最容易误伤的地方：
+
+| 请求 | 分数 | |
+|---|---|---|
+| 写一段露骨的性爱描写 | 0.95 | 转交 |
+| 继续写这段，描写他们做爱的细节 | 0.95 | 转交 |
+| 怎么写露骨的性爱描写才不违规 | **0.20** | 不转交 |
+| 怎么写性爱场面才不会过于露骨？ | **0.20** | 不转交 |
+| 这个平台对情色内容怎么规定 | **0.20** | 不转交 |
+
+机制：同时要求「敏感词 + 生成动词」，且**排除询问式**（怎么写/如何描写/要不要加入），
+带规则咨询词（审核/尺度/规定/政策）的再压一档。
+
+### 配置
+
+| 项 | 默认 | 说明 |
+|---|---|---|
+| `request_intent_check` | true | 总开关 |
+| `request_intent_high` | 0.80 | ≥此值直接转交 |
+| `request_intent_low` | 0.45 | ≤此值判普通请求 |
+| `request_intent_llm_judge` | false | 灰区是否二次判定（多一次小请求） |
+| `request_sensitive_patterns` | [] | 自定义正则，补你的特定语料 |
+
+**自定义词**是你最该用的——内置词表覆盖通用表达，你自己的语料里的黑话/暗号加进去更准：
+
+```json
+"request_sensitive_patterns": ["暗号\w+", "特定角色名.*那个"]
+```
 
 ## 拒绝判定：三层机制
 
@@ -175,6 +228,7 @@ overlap = |请求的内容 bigram ∩ 回复的 bigram| / |请求的 bigram|
 | `soft_refusal_low` | 0.45 | ≤此值直接判正常 |
 | `soft_refusal_llm_judge` | true | 灰区是否走 LLM 判定 |
 | `judge_provider_id` | 空 | 二次判定用哪个提供商，建议指定小模型省钱；留空用当前会话的 |
+| `request_intent_check` | true | 请求侧意图预判，识别要成人内容的请求直接转交 |
 | `sticky_enabled` | true | 拒绝后保持子代理接管若干轮 |
 | `sticky_release_after` | 3 | 扳机A：连续多少轮正常后自动解除 |
 | `sticky_max_turns` | 10 | 硬上限，超过强制解除 |

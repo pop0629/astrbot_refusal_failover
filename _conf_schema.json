@@ -160,5 +160,36 @@
     "description": "解除保留时在回复末尾加一句提示",
     "type": "bool",
     "default": false
+  },
+  "request_intent_check": {
+    "description": "启用请求侧意图预判：用户明确在要成人/情色内容时，不等主模型拒绝直接交给子代理",
+    "type": "bool",
+    "default": true
+  },
+  "request_intent_high": {
+    "description": "请求意图评分上限：≥此值直接判定敏感并转交",
+    "type": "float",
+    "default": 0.8
+  },
+  "request_intent_low": {
+    "description": "请求意图评分下限：≤此值判为普通请求；介于上下限之间时若开启 LLM 判定则二次确认",
+    "type": "float",
+    "default": 0.45
+  },
+  "request_intent_llm_judge": {
+    "description": "灰区是否交给 LLM 二次判定（更准但每轮多一次小请求，默认关）",
+    "type": "bool",
+    "default": false
+  },
+  "request_intent_judge_provider_id": {
+    "description": "请求意图二次判定用哪个提供商（留空=当前会话提供商）",
+    "type": "string",
+    "default": "",
+    "_special": "select_provider"
+  },
+  "request_sensitive_patterns": {
+    "description": "自定义敏感词正则列表（额外补充内置规则，用于你的特定语料）",
+    "type": "list",
+    "default": []
   }
 }
