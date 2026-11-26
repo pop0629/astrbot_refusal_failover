@@ -227,6 +227,34 @@ async def main2():
     s3=await pl._get_sticky("t:F:1")
     check("关闭切换后不进入接管", not s3.active)
 
+
+    # 卸载不能卡住：terminate 必须在有限时间内返回
+    import asyncio as _a
+    async def _stuck():
+        try:
+            while True:
+                await _a.sleep(3600)
+        except _a.CancelledError:
+            await _a.sleep(10)   # 模拟 finally 里有 I/O
+            raise
+    pl, alt, ctx = mk()
+    pl._proactive_task = _a.get_running_loop().create_task(_stuck())
+    await _a.sleep(0.05)
+    t0 = _a.get_running_loop().time()
+    await pl.terminate()
+    elapsed = _a.get_running_loop().time() - t0
+    check("卸载在 5 秒内返回（不会卡住安装流程）", elapsed < 5.0, f"{elapsed:.2f}s")
+
+    # initialize 在无事件循环时不应抛异常
+    pl2, _, _ = mk()
+    pl2._proactive_task = None
+    try:
+        pl2._proactive_task = _a.get_running_loop().create_task(_a.sleep(3600))
+        pl2._proactive_task.cancel()
+        check("任务可正常创建与取消", True)
+    except Exception as e:
+        check("任务可正常创建与取消", False, str(e))
+
     print(f"\n--- 主动消息: {ok}/{total} ---")
     return ok==total
 

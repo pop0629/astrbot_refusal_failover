@@ -65,7 +65,14 @@ class RefusalFailoverPlugin(Star):
     async def initialize(self):
         if self.cfg.get("debug"):
             logger.info(f"[{PLUGIN_NAME}] loaded, alt_provider_id={self.cfg.get('alt_provider_id')}")
-        self._proactive_task = asyncio.create_task(self._proactive_loop())
+        self._proactive_task = None
+        try:
+            loop = asyncio.get_running_loop()
+            self._proactive_task = loop.create_task(self._proactive_loop())
+        except Exception as e:
+            logger.warning(
+                f"[{PLUGIN_NAME}] 主动消息定时器启动失败（不影响其他功能）: {e}"
+            )
 
     # ---------------- KV helpers (memory card) ----------------
 
@@ -1473,10 +1480,12 @@ class RefusalFailoverPlugin(Star):
 
     async def terminate(self):
         task = getattr(self, "_proactive_task", None)
-        if task is not None:
-            task.cancel()
-            try:
-                await task
-            except Exception:
-                pass
         self._proactive_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        try:
+            # bounded wait: never block plugin unload on a stuck task
+            await asyncio.wait_for(asyncio.shield(task), timeout=3.0)
+        except (asyncio.CancelledError, asyncio.TimeoutError, Exception):
+            pass

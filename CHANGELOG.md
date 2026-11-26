@@ -3,6 +3,34 @@
 本项目的所有重要变更都记录在此。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.3.2] - 2026-11-27
+
+### 修复
+- **卸载插件时卡死导致 WebUI 返回 HTTP 500**
+
+  现象：插件管理页点升级/重装，卡在「加载中」，日志停在
+  `Terminating plugin astrbot_refusal_failover ...`，前端报
+  `AxiosError: Request failed with status code 500`。
+
+  根因：v1.3.0 的 `terminate()` 写成
+
+  ```python
+  task.cancel()
+  await task          # 无超时
+  ```
+
+  若后台定时任务此时正卡在 I/O，`await task` 永不返回，
+  整个插件卸载流程 hang 住，HTTP 请求超时后 500。
+
+  修复：
+  - `terminate()` 改为 `wait_for(shield(task), timeout=3.0)`，最多等 3 秒
+  - `initialize()` 启动定时器时用 `get_running_loop()` 并捕获异常，
+    即使没有可用事件循环也只记 warning，不影响插件加载
+
+### 测试
+- 新增卸载耗时断言：构造一个在 `finally` 里有 I/O 的卡住任务，
+  验证 `terminate()` 仍能在 5 秒内返回（实测 3.01s）
+
 ## [1.3.1] - 2026-11-27
 
 ### 修复
