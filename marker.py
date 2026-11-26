@@ -21,9 +21,16 @@ from __future__ import annotations
 
 import re
 
-# Trailing marker: must be preceded by whitespace or start of string,
-# and be the very end (allowing trailing punctuation / whitespace).
-_N_MARKER = re.compile(r"(?:^|\s)/(?:n|nsfw)\s*[。.!！?？]*\s*$", re.IGNORECASE)
+# Trailing marker: may be preceded by whitespace, punctuation, CJK, or nothing.
+# Chinese users habitually type "吗/n" with no space - requiring \s missed it.
+# Still anchored to end-of-string so "/n/abc" and mid-sentence "/n" are ignored.
+_N_MARKER = re.compile(
+    r"^(?:/(?:n|nsfw)\s*[。.!！?？]*\s*$)"          # message is only the marker
+    r"|(?:(?<=[\s。，、；：！？…,;:!?])"
+    r"|(?<=[\u4e00-\u9fff\u3040-\u30ff0-9A-Za-z]))"
+    r"/(?:n|nsfw)\s*[。.!！?？]*\s*$",              # trailing marker
+    re.IGNORECASE,
+)
 
 
 def extract_force_flag(text: str) -> tuple[bool, str]:

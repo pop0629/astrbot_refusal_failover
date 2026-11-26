@@ -14,7 +14,14 @@ def check(n, c, e=""):
     total += 1; ok += bool(c)
     print(f"{'PASS' if c else 'FAIL'}  {n} {e}")
 
+# 真实日志中的用例：中文与 /n 之间没有空格
 cases = [
+    ("宝宝 想再做一次吗/n", True, "宝宝 想再做一次吗"),
+    ("宝宝 想要你/n", True, "宝宝 想要你"),
+    ("继续/n", True, "继续"),
+    ("你好/n。", True, "你好"),
+    ("宝宝吗/nsfw", True, "宝宝吗"),
+
     ("继续写这段 /n", True, "继续写这段"),
     ("继续写这段 /N", True, "继续写这段"),
     ("继续写这段 /nsfw", True, "继续写这段"),
