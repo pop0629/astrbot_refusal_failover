@@ -206,5 +206,10 @@
     "description": "转交后同步修正会话历史（重要）。AstrBot 在触发 on_llm_response 之前就把主模型的原始回复写入历史了，不同步会导致：后台看到主模型回复、其他插件读到拒绝内容、下一轮模型记错",
     "type": "bool",
     "default": true
+  },
+  "preempt_on_intent": {
+    "description": "请求阶段直接抢占：判定要走子代理时，跳过主模型调用并由子代理直接作答。开启后主模型完全不参与（省一半 token、延迟减半、其他插件看不到拒绝文本）",
+    "type": "bool",
+    "default": true
   }
 }

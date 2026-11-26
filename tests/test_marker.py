@@ -110,8 +110,15 @@ class Ctx:
     def get_provider_by_id(self,i): return self._p.get(i)
     def get_using_provider(self,u=None): return self._p.get("MAIN")
 class Evt:
-    def __init__(self,t): self.unified_msg_origin="t:F:1"; self.message_str=t
+    def __init__(self,t):
+        self.unified_msg_origin="t:F:1"; self.message_str=t
+        self._result=None; self._stopped=False; self._x={}
     def plain_result(self,x): return x
+    def set_result(self,r): self._result=r
+    def stop_event(self): self._stopped=True
+    def is_stopped(self): return self._stopped
+    def get_extra(self,k,d=None): return self._x.get(k,d)
+    def set_extra(self,k,v): self._x[k]=v
 class Req:
     def __init__(self): self.system_prompt=""; self.contexts=[]; self.prompt=""
 
@@ -139,8 +146,11 @@ def make(over=None):
     return pl,main,alt
 
 async def turn(pl, text, reply):
+    """复刻完整时序：请求钩子（可能抢占）→ 若未抢占才走回应钩子。"""
     e=Evt(text)
     await pl.inject_continuity(e, Req())
+    if e.is_stopped():
+        return e._result, e          # 被抢占：主模型未运行
     r=LLMResponse(completion_text=reply)
     await pl.on_llm_response(e, r)
     return r.completion_text, e
@@ -150,7 +160,7 @@ async def main():
     pl,main,alt=make()
     out,e=await turn(pl,"宝宝 我想要你 /n","好的，那我们继续第三章。")
     check("标记触发转交", alt.alt_calls==1, f"alt={alt.alt_calls}")
-    check("输出被子代理覆盖", out==GOOD)
+    check("输出为子代理内容", out==GOOD, repr(out)[:40])
     check("标记已从消息剥离", "/n" not in (e.message_str or ""), repr(e.message_str))
     check("剥离后保留原句", (e.message_str or "").strip()=="宝宝 我想要你", repr(e.message_str))
 

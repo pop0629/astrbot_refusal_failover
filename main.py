@@ -795,6 +795,126 @@ class RefusalFailoverPlugin(Star):
         await self.put_kv_data(self._intent_key(umo), "")
         return data if data.get("hit") else {}
 
+    # ---------------- preempt: skip the main model entirely ----------------
+
+    async def _try_preempt(self, event) -> bool:
+        """If this turn should go to ALT, answer it now and stop the main model.
+
+        Returns True when this turn was fully handled (caller must not continue).
+        """
+        umo = event.unified_msg_origin
+
+        p_alt = await self._peek_intent_hit(umo)
+        sticky = await self._get_sticky(umo)
+
+        if not p_alt and not sticky.active:
+            return False
+
+        alt_id = str(self.cfg.get("alt_provider_id", "")).strip()
+        if not alt_id:
+            return False
+        alt = self._resolve_provider(alt_id)
+        if alt is None:
+            return False
+
+        # ---- build the same brief the post-hoc path uses ----
+        card = await self._load_card(umo)
+        turns = await self._recent_turns(event, int(self.cfg.get("history_turns", 8)))
+        current = strip_all_markers(event.message_str or "")
+        if turns and turns[-1][0] == "user":
+            turns = turns[:-1]
+
+        style = str(self.cfg.get("style_brief", ""))
+        style_sample = await self._main_style_sample(event)
+        memory = (
+            card.render(int(self.cfg.get("memory_max_chars", 1800)))
+            if self.cfg.get("enable_memory_card", True)
+            else ""
+        )
+        sys_prompt = build_failover_system_prompt(style, memory, "", style_sample)
+        user_prompt = build_failover_user_prompt(turns, current)
+        model = str(self.cfg.get("alt_model", "")).strip() or None
+
+        alt_text = await self._call_alt(alt, umo, sys_prompt, user_prompt, model)
+        if not alt_text:
+            # fall through to the normal path rather than leaving the user hanging
+            return False
+
+        # ---- consume the per-turn flag, enter/advance sticky ----
+        intent = await self._take_intent_hit(umo)
+        if not sticky.active and self.cfg.get("sticky_enabled", False):
+            from .sticky import on_enter
+
+            by_marker = "显式标记" in " ".join(intent.get("hits", []) if intent else [])
+            sticky = on_enter(
+                alt_id,
+                int(self.cfg.get("sticky_judge_every", 0)),
+                sticky_release=False if by_marker else True,
+            )
+            await self._save_sticky(umo, sticky)
+            if self.cfg.get("debug"):
+                logger.info(
+                    f"[{PLUGIN_NAME}] preempt entered sticky (by_marker={by_marker})"
+                )
+
+        if sticky.active:
+            from .sticky import evaluate_turn, on_turn_had_signal
+
+            # the ALT answer itself is evidence for/against release
+            info = score_refusal(alt_text, current)
+            if info["score"] >= float(self.cfg.get("soft_refusal_low", 0.45)):
+                on_turn_had_signal(sticky)
+
+            cap = (
+                int(self.cfg.get("sticky_max_turns", 10))
+                if sticky.release_enabled
+                else int(self.cfg.get("marker_sticky_max_turns", 50))
+            )
+            decision = evaluate_turn(
+                sticky,
+                max_turns=cap,
+                release_after_clean=int(self.cfg.get("sticky_release_after", 3)),
+                judge_every=0,  # trigger C stays post-hoc only
+            )
+            if decision.release:
+                await self._clear_sticky(umo)
+                if self.cfg.get("debug"):
+                    logger.info(f"[{PLUGIN_NAME}] sticky released: {decision.reason}")
+            else:
+                await self._save_sticky(umo, sticky)
+
+        # ---- deliver straight to the user ----
+        try:
+            yield_result = event.plain_result(alt_text)
+            event.set_result(yield_result)
+        except Exception as e:
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] preempt delivery failed: {e}")
+            return False
+
+        # ---- stop the main model from running ----
+        event.stop_event()
+
+        if self.cfg.get("debug"):
+            logger.info(
+                f"[{PLUGIN_NAME}] preempted main model "
+                f"({'sticky' if sticky.active else 'intent'}), {len(alt_text)} chars"
+            )
+
+        # keep the memory card fresh; nothing to sync because the main model
+        # never produced a reply this turn
+        await self._maybe_refresh_memory(event, umo, card, alt_text, current)
+        return True
+
+    async def _peek_intent_hit(self, umo: str) -> bool:
+        raw = await self.get_kv_data(self._intent_key(umo), "")
+        if not raw:
+            return False
+        try:
+            return bool(json.loads(raw).get("hit"))
+        except Exception:
+            return False
+
     # ---------------- manual-switch continuity injection ----------------
 
     @filter.on_llm_request(priority=100)
@@ -808,6 +928,14 @@ class RefusalFailoverPlugin(Star):
         """
         # ---- request-side intent pre-check (runs regardless of mode) ----
         await self._precheck_request_intent(event)
+
+        # ---- preempt: answer with the ALT provider instead of calling main ----
+        # Without this the main model runs (and refuses) on every turn, so other
+        # plugins still see the refusal and we pay for two LLM calls.
+        if self.cfg.get("preempt_on_intent", True):
+            handled = await self._try_preempt(event)
+            if handled:
+                return
 
         if not self.cfg.get("manual_switch_continuity", True):
             return
