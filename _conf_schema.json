@@ -191,5 +191,10 @@
     "description": "自定义敏感词正则列表（额外补充内置规则，用于你的特定语料）",
     "type": "list",
     "default": []
+  },
+  "marker_enabled": {
+    "description": "启用显式标记：消息末尾加 /n 或 /nsfw 表示本轮明确需要生成，直接交给子代理（用完即弃，不影响后续轮次）",
+    "type": "bool",
+    "default": true
   }
 }

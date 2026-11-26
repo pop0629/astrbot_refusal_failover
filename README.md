@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-0.7.0-blue)
+![version](https://img.shields.io/badge/version-0.8.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -79,6 +79,40 @@ astrbot_refusal_failover/
 | `memory_update_every_n` | 6 | 记忆卡刷新间隔 |
 | `notify_user` | false | 是否输出「由备用通道继续」提示 |
 
+## 显式标记 `/n`（最可靠的一层）
+
+猜意图永远有误差。用户直接说清楚最准：
+
+```
+用户: 宝宝 我想要你 /n
+      ↓
+本轮强制交给子代理，不等主模型、不靠词表
+```
+
+**用法**：消息末尾加 `/n` 或 `/nsfw`（大小写都行，后面可以跟标点）
+
+```
+继续写这段，描写他们做爱的细节 /n
+宝宝 我想要你 /n
+继续那一段 /nsfw
+```
+
+**特性**：
+
+| 行为 | 说明 |
+|---|---|
+| 用完即弃 | 只影响这一轮，下一轮自动回主模型 |
+| 自动剥离 | 标记不会传给模型，模型看不到 `/n` |
+| 只认行尾 | `路径 /n/abc`、`/normal`、句中 `/n` 都不误触 |
+| 优先级最高 | 即使词表判定为正常，标记也强制转交 |
+
+**为什么不做成持久状态**：忘了撤销会导致后续所有对话都走备用模型，这是最糟的失败模式。一轮一授权更安全。
+
+**关闭**：`marker_enabled: false`
+
+推荐组合：**日常靠 `/n` 显式标记 + 词表兜底**。词表覆盖明确露骨的生成请求（「写一段…」），
+`/n` 覆盖所有含蓄表达（「宝宝 我想要你」这类词表永远抓不到的）。
+
 ## 请求侧意图预判（最灵敏的一层）
 
 前面几层都在看「模型回了什么」。但最可靠的信号其实是**用户要什么**。
@@ -120,6 +154,7 @@ score_request(用户消息)          ← 零成本关键词评分
 
 | 项 | 默认 | 说明 |
 |---|---|---|
+| `marker_enabled` | true | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
 | `request_intent_check` | true | 总开关 |
 | `request_intent_high` | 0.80 | ≥此值直接转交 |
 | `request_intent_low` | 0.45 | ≤此值判普通请求 |
@@ -228,6 +263,7 @@ overlap = |请求的内容 bigram ∩ 回复的 bigram| / |请求的 bigram|
 | `soft_refusal_low` | 0.45 | ≤此值直接判正常 |
 | `soft_refusal_llm_judge` | true | 灰区是否走 LLM 判定 |
 | `judge_provider_id` | 空 | 二次判定用哪个提供商，建议指定小模型省钱；留空用当前会话的 |
+| `marker_enabled` | true | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
 | `request_intent_check` | true | 请求侧意图预判，识别要成人内容的请求直接转交 |
 | `sticky_enabled` | true | 拒绝后保持子代理接管若干轮 |
 | `sticky_release_after` | 3 | 扳机A：连续多少轮正常后自动解除 |

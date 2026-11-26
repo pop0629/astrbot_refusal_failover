@@ -40,6 +40,7 @@ from .soft_refusal import (
     verdict_reason,
 )
 from .style_check import build_style_sample, drift_report, style_drift
+from .marker import extract_force_flag, strip_all_markers
 from .request_intent import (
     build_request_judge_prompt,
     parse_request_judge,
@@ -582,19 +583,42 @@ class RefusalFailoverPlugin(Star):
     async def _precheck_request_intent(self, event) -> None:
         """Classify the user's request BEFORE the main model answers.
 
-        If it is clearly an adult-content generation request, mark the session
-        so the response hook routes straight to the ALT provider instead of
-        waiting for a refusal we may fail to recognise.
+        Order of precedence:
+          1. explicit /n marker  -> definitive, no guessing
+          2. keyword scoring     -> adult-generation vocabulary
+          3. optional LLM check  -> borderline scores only
         """
-        if not self.cfg.get("request_intent_check", True):
-            return
-
         umo = event.unified_msg_origin
         text = event.message_str or ""
         if not text.strip():
             return
 
         extra = self.cfg.get("request_sensitive_patterns", []) or []
+
+        # ---- 1. explicit marker (always honoured, even if scoring is off) ----
+        if self.cfg.get("marker_enabled", True):
+            has_flag, cleaned = extract_force_flag(text)
+            if has_flag:
+                # strip the marker so the model never sees it
+                try:
+                    event.message_str = cleaned
+                except Exception:
+                    pass
+                await self.put_kv_data(
+                    self._intent_key(umo),
+                    json.dumps(
+                        {"hit": True, "score": 1.0, "hits": ["显式标记 /n"],
+                         "ts": time.time()},
+                        ensure_ascii=False,
+                    ),
+                )
+                if self.cfg.get("debug"):
+                    logger.info(f"[{PLUGIN_NAME}] explicit marker -> force failover")
+                return
+
+        if not self.cfg.get("request_intent_check", True):
+            return
+
         info = score_request(text, extra)
 
         high = float(self.cfg.get("request_intent_high", 0.80))
