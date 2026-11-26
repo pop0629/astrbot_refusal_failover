@@ -248,6 +248,7 @@ class RefusalFailoverPlugin(Star):
 
         response.completion_text = alt_text
         response.reasoning_content = None  # do not leak main model's CoT
+        await self._sync_history(event, response, alt_text)
 
         # ---- audit marker (not shown to the user) ----
         try:
@@ -370,6 +371,7 @@ class RefusalFailoverPlugin(Star):
 
         response.completion_text = alt_text
         response.reasoning_content = None
+        await self._sync_history(event, response, alt_text)
 
         # did this turn still look like a refusal? then the clean streak resets
         info = score_refusal(alt_text, current)
@@ -403,6 +405,7 @@ class RefusalFailoverPlugin(Star):
                 logger.info(f"[{PLUGIN_NAME}] sticky released: {decision.reason}")
             if self.cfg.get("sticky_notify_on_release", False):
                 response.completion_text = alt_text + "\n\n（已切回主模型）"
+                await self._sync_history(event, response, response.completion_text)
         else:
             await self._save_sticky(umo, sticky)
 
@@ -431,6 +434,100 @@ class RefusalFailoverPlugin(Star):
             if self.cfg.get("debug"):
                 logger.warning(f"[{PLUGIN_NAME}] sticky judge failed: {e}")
             return None
+
+    # ---------------- history sync (critical) ----------------
+
+    async def _sync_history(self, event, response, new_text: str) -> None:
+        """Rewrite the assistant turn that was already persisted before our hook ran.
+
+        Why this exists: ToolLoopAgentRunner calls
+            _append_context_messages([Message(assistant, parts)], record_response=True)
+        BEFORE firing OnLLMResponseEvent. `parts` holds a *copy* of the main
+        model's text, so by the time our hook rewrites `response.completion_text`,
+        the database already contains the original (refused) reply.
+
+        Without this fix the chat window shows the ALT output while the stored
+        history - what the model sees next turn, and what every other plugin
+        reads - still holds the refusal. Symptoms: main model "replying" in the
+        logs, other plugins showing the refusal, the model forgetting the turn.
+        """
+        if not self.cfg.get("sync_history", True):
+            return
+
+        umo = event.unified_msg_origin
+
+        # ---- 1. try the in-memory working context (cheapest, most precise) ----
+        if self._patch_working_context(event, new_text):
+            if self.cfg.get("debug"):
+                logger.info(f"[{PLUGIN_NAME}] history synced in working context")
+            return
+
+        # ---- 2. fall back to rewriting the stored conversation ----
+        try:
+            cm = self.context.conversation_manager
+            cid = await cm.get_curr_conversation_id(umo)
+            if not cid:
+                return
+            conv = await cm.get_conversation(umo, cid)
+            if not conv or not conv.content:
+                return
+
+            history = list(conv.content)
+            # walk backwards to the last assistant entry with the original text
+            for i in range(len(history) - 1, -1, -1):
+                if history[i].get("role") != "assistant":
+                    continue
+                cur = history[i].get("content", "")
+                if isinstance(cur, list):
+                    cur = " ".join(
+                        p.get("text", "")
+                        for p in cur
+                        if isinstance(p, dict) and p.get("text")
+                    )
+                if cur.strip() and cur.strip() != new_text.strip():
+                    history[i]["content"] = new_text
+                    await cm.update_conversation(
+                        unified_msg_origin=umo,
+                        conversation_id=cid,
+                        history=history,
+                    )
+                    if self.cfg.get("debug"):
+                        logger.info(
+                            f"[{PLUGIN_NAME}] history synced via update_conversation "
+                            f"(index {i})"
+                        )
+                break
+        except Exception as e:
+            if self.cfg.get("debug"):
+                logger.warning(f"[{PLUGIN_NAME}] history sync failed: {e}")
+
+    def _patch_working_context(self, event, new_text: str) -> bool:
+        """Patch the runner's in-memory messages if reachable via event extras."""
+        try:
+            run_ctx = event.get_extra("run_context") or event.get_extra("_run_context")
+            messages = getattr(run_ctx, "messages", None) if run_ctx else None
+            if not messages:
+                return False
+            for msg in reversed(messages):
+                if getattr(msg, "role", "") != "assistant":
+                    continue
+                content = getattr(msg, "content", None)
+                if not isinstance(content, list):
+                    return False
+                # match by capability, not class name: the runner may use
+                # TextPart or a provider-specific text part
+                for part in content:
+                    if type(part).__name__ == "ThinkPart":
+                        continue
+                    if hasattr(part, "text") and isinstance(
+                        getattr(part, "text", None), str
+                    ):
+                        part.text = new_text
+                        return True
+                return False
+        except Exception:
+            return False
+        return False
 
     # ---------------- refusal judgement (3 tiers) ----------------
 

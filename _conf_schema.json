@@ -201,5 +201,10 @@
     "description": "由 /n 标记触发时，最多保持由子代理接管多少轮（比自动转交的 sticky_max_turns 宽松，因为是你主动要求的）",
     "type": "int",
     "default": 50
+  },
+  "sync_history": {
+    "description": "转交后同步修正会话历史（重要）。AstrBot 在触发 on_llm_response 之前就把主模型的原始回复写入历史了，不同步会导致：后台看到主模型回复、其他插件读到拒绝内容、下一轮模型记错",
+    "type": "bool",
+    "default": true
   }
 }

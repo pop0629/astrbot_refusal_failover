@@ -2,7 +2,7 @@
 
 > AstrBot 插件：主模型拒绝时静默切到备用模型续写，用户看不出换过人。
 
-![version](https://img.shields.io/badge/version-0.9.0-blue)
+![version](https://img.shields.io/badge/version-0.10.0-blue)
 ![license](https://img.shields.io/badge/license-MIT-green)
 ![platform](https://img.shields.io/badge/AstrBot-v3+-orange)
 
@@ -173,6 +173,7 @@ score_request(用户消息)          ← 零成本关键词评分
 
 | 项 | 默认 | 说明 |
 |---|---|---|
+| `sync_history` | true | 转交后修正会话历史（重要） |
 | `marker_enabled` | true | 启用 /n 显式标记 |
 | `marker_sticky_max_turns` | 50 | /n 触发的接管最多持续轮数 | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
 | `request_intent_check` | true | 总开关 |
@@ -283,6 +284,7 @@ overlap = |请求的内容 bigram ∩ 回复的 bigram| / |请求的 bigram|
 | `soft_refusal_low` | 0.45 | ≤此值直接判正常 |
 | `soft_refusal_llm_judge` | true | 灰区是否走 LLM 判定 |
 | `judge_provider_id` | 空 | 二次判定用哪个提供商，建议指定小模型省钱；留空用当前会话的 |
+| `sync_history` | true | 转交后修正会话历史（重要） |
 | `marker_enabled` | true | 启用 /n 显式标记 |
 | `marker_sticky_max_turns` | 50 | /n 触发的接管最多持续轮数 | 启用 /n 显式标记，行尾加 /n 强制本轮转交 |
 | `request_intent_check` | true | 请求侧意图预判，识别要成人内容的请求直接转交 |
@@ -351,6 +353,46 @@ C **默认完全关闭**（`sticky_judge_every=0`），因为启用它有一个�
 
 **安全兜底**：sticky 期间若子代理不可用（provider 被删、返回空），
 立即自动释放，用户不会卡在无人应答的状态。
+
+## 历史同步（v0.10.0，重要修复）
+
+### 问题
+
+AstrBot 的 `ToolLoopAgentRunner` 执行顺序是：
+
+```python
+parts.append(TextPart(text=llm_resp.completion_text))        # ① 值拷贝
+await self._append_context_messages(                          # ② 写入会话历史
+    [Message(role="assistant", content=parts)], record_response=True
+)
+await self.agent_hooks.on_llm_response(self.run_context, llm_resp)  # ③ 钩子才跑
+```
+
+**主模型的原始回复在第 ③ 步之前就已经落库了。** 插件在钩子里改
+`completion_text`，改的只是内存对象，历史里存的是改之前的原文。
+
+症状：
+
+| 表现 | 原因 |
+|---|---|
+| 后台日志看到主模型的回复 | 历史里就是主模型原文 |
+| 对话框显示子代理内容 | 展示层读的是改后的对象 |
+| 其他插件界面显示主模型的拒绝 | 它们读会话历史 |
+| 下一轮模型"忘了"上一轮说了什么 | 模型读的也是历史 |
+
+### 修复
+
+转交成功后，插件回头把历史里那条 assistant 消息改写掉：
+
+```
+1. 优先改 run_context.messages 里的 part（内存，最精确）
+2. 回退到 update_conversation 覆盖存储的历史
+```
+
+**这个修复是必须的**，不只是为了显示一致——历史错了，模型下一轮看到的上下文就是错的，
+会持续"记得自己在拒绝"。
+
+关闭：`sync_history: false`（不建议，仅用于对比复现问题）
 
 ## 命令
 
