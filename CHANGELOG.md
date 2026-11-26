@@ -3,6 +3,25 @@
 本项目的所有重要变更都记录在此。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.3.1] - 2026-11-27
+
+### 修复
+- **改用 AstrBot 公开导入路径，避免从 GitHub 安装后加载失败**
+
+  ```python
+  # 旧（内部路径，跨版本易碎）
+  from astrbot.core.provider.entities import LLMResponse, ProviderType
+
+  # 新（公开 API，带回退）
+  try:
+      from astrbot.api.provider import LLMResponse
+  except ImportError:
+      from astrbot.core.provider.entities import LLMResponse
+  ```
+
+  `astrbot.api.provider` 是 `astrbot/api/provider/__init__.py` 正式导出的路径，
+  包含 `LLMResponse` 与 `ProviderType`。保留 `ImportError` 回退以兼容旧布局。
+
 ## [1.3.0] - 2026-11-27
 
 ### 新增

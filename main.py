@@ -21,7 +21,10 @@ import time
 from astrbot.api import logger, AstrBotConfig
 from astrbot.api.event import filter, AstrMessageEvent
 from astrbot.api.star import Context, Star
-from astrbot.core.provider.entities import LLMResponse
+try:  # public path (preferred)
+    from astrbot.api.provider import LLMResponse
+except ImportError:  # older layouts
+    from astrbot.core.provider.entities import LLMResponse
 
 from .failover import (
     MemoryCard,
@@ -1113,7 +1116,10 @@ class RefusalFailoverPlugin(Star):
 
     async def _apply_provider(self, umo: str, provider_id: str) -> None:
         """Switch this session's chat provider via AstrBot's native API."""
-        from astrbot.core.provider.entities import ProviderType
+        try:
+            from astrbot.api.provider import ProviderType
+        except ImportError:
+            from astrbot.core.provider.entities import ProviderType
 
         await self.context.provider_manager.set_provider(
             provider_id, ProviderType.CHAT_COMPLETION, umo
