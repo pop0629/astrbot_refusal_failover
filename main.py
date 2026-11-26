@@ -164,6 +164,7 @@ class RefusalFailoverPlugin(Star):
         # ---- request-side intent wins: the user asked for content the main
         # model will refuse, no need to wait for a refusal we might miss ----
         intent = await self._take_intent_hit(umo)
+        by_marker = "显式标记" in " ".join(intent.get("hits", []) if intent else [])
         if intent and not verdict.refused:
             verdict = RefusalVerdict(
                 True,
@@ -288,9 +289,6 @@ class RefusalFailoverPlugin(Star):
             # "N clean turns" - the sub-agent answering well is the expected
             # outcome, not a signal to go back. Only a manual /fm or the hard
             # turn cap releases this kind of sticky.
-            by_marker = verdict.matched_by == "request-intent" and "显式标记" in (
-                verdict.reason or ""
-            )
             st = on_enter(
                 alt_id,
                 int(self.cfg.get("sticky_judge_every", 0)),

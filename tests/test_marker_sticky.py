@@ -167,6 +167,22 @@ async def main():
         await turn(pl2,"继续","正常内容")
     check("对照: 3 轮后自动解除", not (await pl2._get_sticky("t:F:1")).active)
 
+
+    # ---- 回归：主模型确实拒绝了 + 用户带了 /n ----
+    # 曾经 bug：_judge_refusal 先返回 marker，导致 by_marker 判断为 False，
+    # /n 被当成自动拒绝，3 轮后切回主模型。
+    pl3,alt3=make({"preempt_on_intent":False})
+    e3=Evt("宝宝 我想要你 /n")
+    await pl3.inject_continuity(e3, Req())
+    r3=LLMResponse(completion_text='{"status":"refused","reason":"policy"}')
+    await pl3.on_llm_response(e3, r3)
+    s3=await pl3._get_sticky("t:F:1")
+    check("回归: 主模型拒绝 + /n 仍判为标记触发", s3.active and s3.release_enabled is False,
+          f"rel={s3.release_enabled}")
+    for i in range(4):
+        await turn(pl3, f"继续{i}", "正常内容")
+    check("回归: 4 轮后仍在 sticky", (await pl3._get_sticky("t:F:1")).active)
+
     print(f"\n--- /n sticky 行为: {ok}/{total} ---")
     return ok==total
 

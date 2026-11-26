@@ -3,6 +3,32 @@
 本项目的所有重要变更都记录在此。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.1.1] - 2026-11-27
+
+### 修复
+- **`/n` 后第二轮就切回主模型**
+
+  事后覆盖路径（`on_llm_response`）里，`by_marker` 的判断错误地依赖
+  `verdict.matched_by == "request-intent"`：
+
+  ```python
+  by_marker = verdict.matched_by == "request-intent" and "显式标记" in verdict.reason
+  ```
+
+  但主模型若真的返回了 `{"status":"refused"}`，`_judge_refusal` 会先返回
+  `matched_by="marker"`，`refused=True`，于是后面
+  `if intent and not verdict.refused` 不成立，`verdict` 保持 marker 来源，
+  `by_marker` 变成 `False`。
+
+  结果：`/n` 被当作「自动拒绝」进入 sticky（`release_enabled=True`），
+  连续 3 轮正常后自动切回。
+
+  修复：`by_marker` 直接从 intent 的 hits 判断，不依赖 verdict 来源。
+
+### 测试
+- 新增回归用例：主模型确实拒绝 + 用户带 `/n`，验证仍判为标记触发，
+  4 轮后仍在 sticky。`test_marker_sticky` 增至 21 项
+
 ## [1.1.0] - 2026-11-27
 
 ### 变更
