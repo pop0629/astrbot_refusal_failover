@@ -234,6 +234,33 @@ async def main():
     has_alt = any(m.get("role") == "assistant" and GOOD in str(m.get("content", "")) for m in hist)
     check("派发时已含本轮助手回复", has_alt)
 
+
+    # 9) 优先级契约：request 钩子必须最后跑（让其他插件先读用户消息），
+    #    response 钩子必须最先跑（我们改写后才轮到别人存档）。
+    import inspect as _insp
+
+    def _prio(fn):
+        # 装饰器在测试桩里是 no-op，直接从源码读字面量
+        src = _insp.getsource(fn)
+        for line in src.splitlines():
+            if "@filter.on_llm_request" in line or "@filter.on_llm_response" in line:
+                if "priority=" in line:
+                    return int(line.split("priority=")[1].rstrip(")"))
+        return 0
+
+    src_main = open(os.path.join(PKG, "main.py"), encoding="utf-8").read()
+    req_prio = None
+    resp_prio = None
+    for line in src_main.splitlines():
+        if "on_llm_request(priority=" in line:
+            req_prio = int(line.split("priority=")[1].rstrip(")"))
+        if "on_llm_response(priority=" in line:
+            resp_prio = int(line.split("priority=")[1].rstrip(")"))
+    check("request 钩子优先级为负（最后执行）", req_prio is not None and req_prio < 0,
+          f"={req_prio}")
+    check("response 钩子优先级为正（最先执行）", resp_prio is not None and resp_prio > 0,
+          f"={resp_prio}")
+
     print(f"\n--- 抢占模式: {ok}/{total} ---")
     return ok==total
 

@@ -3,6 +3,33 @@
 本项目的所有重要变更都记录在此。
 格式参考 [Keep a Changelog](https://keepachangelog.com/zh-CN/1.1.0/)。
 
+## [1.1.4] - 2026-11-27
+
+### 修复
+- **其他插件读不到用户消息**
+
+  诊断包日志给出决定性证据：
+
+  ```
+  01:29:23.810  astrbot_refusal_failover - inject_continuity stopped event propagation.
+  ```
+
+  `stop_event()` 是**全局**的，会中断 `call_event_hook` 的 handler 循环。
+  而 `inject_continuity` 设的是 `priority=100`（最先执行），于是记忆/陪伴
+  类插件的 `on_llm_request` 根本没机会运行 —— 它们读不到用户消息。
+
+  修复：两个钩子的优先级改为**相反方向**
+
+  | 钩子 | 优先级 | 理由 |
+  |---|---|---|
+  | `on_llm_request` | **-100**（最后） | 让其他插件先读完用户消息，我们再抢占 |
+  | `on_llm_response` | **100**（最先） | 我们先改写回复，其他插件存档时才是子代理内容 |
+
+  之前两者都设 100，方向冲突导致必然牺牲一方。
+
+### 测试
+- 新增优先级契约断言，防止未来改动再次冲突。`test_preempt` 增至 24 项
+
 ## [1.1.3] - 2026-11-27
 
 ### 修复

@@ -910,7 +910,9 @@ class RefusalFailoverPlugin(Star):
                 logger.warning(f"[{PLUGIN_NAME}] preempt delivery failed: {e}")
             return False
 
-        # ---- stop the main model from running ----
+        # ---- stop the main model ----
+        # Safe now: this hook has the lowest priority, so every other plugin
+        # has already read the user message by the time we get here.
         event.stop_event()
 
         if self.cfg.get("debug"):
@@ -988,7 +990,10 @@ class RefusalFailoverPlugin(Star):
 
     # ---------------- manual-switch continuity injection ----------------
 
-    @filter.on_llm_request(priority=100)
+    # priority=-100 runs LAST among request hooks. Other plugins (memory,
+    # companion) read the user message here; if we ran first and stopped the
+    # event they would never see it. We deliberately yield to them.
+    @filter.on_llm_request(priority=-100)
     async def inject_continuity(self, event: AstrMessageEvent, req):
         """While the session is on the ALt provider (manual switch), give it the
         same continuity scaffolding the automatic failover uses:
